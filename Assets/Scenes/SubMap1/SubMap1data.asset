@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 18e220d6301b06240a16516dbaf90c8b, type: 3}
+  m_Name: SubMap1data
+  m_EditorClassIdentifier: Assembly-CSharp::MapData
+  points:
+  - name: 
+    anchoredPosition: {x: 0, y: 0}
+    targetScene: Event 1
+    icon: {fileID: 0}
+  - name: 
+    anchoredPosition: {x: 0, y: 0}
+    targetScene: Event 2
+    icon: {fileID: 0}
+  - name: 
+    anchoredPosition: {x: 0, y: 0}
+    targetScene: Event 3
+    icon: {fileID: 0}
+  - name: 
+    anchoredPosition: {x: 0, y: 0}
+    targetScene: Event 4
+    icon: {fileID: 0}
+  - name: 
+    anchoredPosition: {x: 0, y: 0}
+    targetScene: Event 5
+    icon: {fileID: 0}
