@@ -1,13 +1,12 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// Per-character action panel controller:
-/// - ผูกกับ prefab panel ที่มีปุ่ม Normal/Skill/Swap, ไอคอน, ชื่อ, HP, cooldown text
-/// - TurnManager จะ instantiate prefab และตั้ง playerEquipment / turnManager ให้
-/// - เมื่อกดปุ่ม จะตรวจว่าเป็นเทิร์นของตัวละครก่อนจึงทำ action
+/// Per-character action panel controller (updated):
+/// - Use callbacks from CharacterEquipment so EndTurn is called only after animation/processing finishes.
+/// - Skill now waits for UseSkill onComplete callback before calling EndTurn.
 /// </summary>
 [DisallowMultipleComponent]
 public class PerCharacterUIController : MonoBehaviour
@@ -45,13 +44,11 @@ public class PerCharacterUIController : MonoBehaviour
 
     void Update()
     {
-        // Keep UI in sync (enable/disable according to whose turn)
         UpdateInteractableState();
         RefreshCooldown();
         RefreshHP();
     }
 
-    // Public API used by TurnManager when instantiating panels
     public void RefreshAll()
     {
         RefreshIcon();
@@ -69,10 +66,7 @@ public class PerCharacterUIController : MonoBehaviour
             iconImage.sprite = wi.icon;
             iconImage.enabled = true;
         }
-        else
-        {
-            iconImage.enabled = false;
-        }
+        else iconImage.enabled = false;
     }
 
     void RefreshHP()
@@ -81,7 +75,6 @@ public class PerCharacterUIController : MonoBehaviour
         var ps = playerEquipment.GetComponent<PlayerStat>();
         if (ps != null)
         {
-            // If your PlayerStat has maxHp field/property named differently, adjust accordingly
             var maxHpProp = ps.GetType().GetProperty("maxHp");
             var maxHp = maxHpProp != null ? maxHpProp.GetValue(ps) : "?";
             hpText.text = $"{GetFieldInt(ps, "hp")}/{maxHp}";
@@ -112,7 +105,6 @@ public class PerCharacterUIController : MonoBehaviour
         if (swapButton != null) swapButton.interactable = isActiveTurn;
     }
 
-    // --- Button callbacks ---
     public void OnNormalClicked()
     {
         if (!CanAct()) return;
@@ -122,28 +114,43 @@ public class PerCharacterUIController : MonoBehaviour
         var target = tm.selectedMonster;
         if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected"); return; }
 
-        // Prefer using GoAttck animation if present
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
         if (goAI != null)
         {
             SetAllButtonsInteractable(false);
             goAI.AttackMonster(target, () =>
             {
-                // apply damage if AttackMonster does not already do it
-                try { playerEquipment.DoNormalAttack(target); } catch { }
-                // return to start then end turn
-                goAI.ReturnToStart(() =>
+                try
                 {
-                    tm.EndTurn();
-                    SetAllButtonsInteractable(true);
-                });
+                    // Use callback-based DoNormalAttack so we wait for weapon effects too
+                    playerEquipment.DoNormalAttack(target, () =>
+                    {
+                        goAI.ReturnToStart(() =>
+                        {
+                            tm.EndTurn();
+                            SetAllButtonsInteractable(true);
+                        });
+                    });
+                }
+                catch
+                {
+                    goAI.ReturnToStart(() =>
+                    {
+                        tm.EndTurn();
+                        SetAllButtonsInteractable(true);
+                    });
+                }
             });
         }
         else
         {
-            // fallback: instant attack then end turn
-            playerEquipment.DoNormalAttack(target);
-            tm.EndTurn();
+            // fallback: call with callback then EndTurn
+            SetAllButtonsInteractable(false);
+            playerEquipment.DoNormalAttack(target, () =>
+            {
+                tm.EndTurn();
+                SetAllButtonsInteractable(true);
+            });
         }
     }
 
@@ -157,16 +164,19 @@ public class PerCharacterUIController : MonoBehaviour
         for (int i = 0; i < tm.battlerObjects.Count && i < tm.battlers.Count; i++)
         {
             var go = tm.battlerObjects[i];
-            var b = tm.battlers[i];
+            var b  = tm.battlers[i];
             if (go != null && b != null && b.isMonster && b.hp > 0) targets.Add(go);
         }
         if (targets.Count == 0) { Debug.LogWarning("[PerCharacterUI] No valid skill targets"); return; }
 
         SetAllButtonsInteractable(false);
-        playerEquipment.UseSkill(targets);
-        // UseSkill may be instant; if you have animation/callbacks, tie EndTurn to those instead
-        tm.EndTurn();
-        SetAllButtonsInteractable(true);
+
+        // Use callback form so EndTurn happens only after skill has finished (animation/effects)
+        playerEquipment.UseSkill(targets, () =>
+        {
+            tm.EndTurn();
+            SetAllButtonsInteractable(true);
+        });
     }
 
     public void OnSwapClicked()
@@ -190,7 +200,6 @@ public class PerCharacterUIController : MonoBehaviour
         if (swapButton != null) swapButton.interactable = v;
     }
 
-    // helper to safely get integer field/property (reflection fallback)
     int GetFieldInt(object obj, string name)
     {
         if (obj == null) return 0;
