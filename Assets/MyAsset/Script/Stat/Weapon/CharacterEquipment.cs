@@ -77,11 +77,9 @@ public class CharacterEquipment : MonoBehaviour
                 Debug.LogWarning("[CharacterEquipment] Prefab has no WeaponController; adding fallback component.");
                 weaponController = currentWeaponInstance.AddComponent<WeaponController>();
             }
-            else
-            {
-                // if controller supports ApplyWeaponData, call it
-                try { weaponController.ApplyWeaponData(item); } catch { }
-            }
+
+            // try to apply item data to controller if available
+            try { weaponController.ApplyWeaponData(item); } catch { }
         }
         else
         {
@@ -96,6 +94,8 @@ public class CharacterEquipment : MonoBehaviour
         }
 
         currentWeaponItem = item;
+
+        // Try to raise an event or inform listeners: if you want add OnEquipped event later.
         Debug.Log($"[CharacterEquipment] Equipped {item.displayName} => weaponController={(weaponController != null ? weaponController.GetType().Name : "null")}");
     }
 
@@ -165,7 +165,10 @@ public class CharacterEquipment : MonoBehaviour
                 return;
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CharacterEquipment] Exception calling PerformNormalAttack: {ex}");
+        }
 
         // fallback immediate completion
         onComplete?.Invoke();
@@ -190,7 +193,10 @@ public class CharacterEquipment : MonoBehaviour
                 return;
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[CharacterEquipment] Exception calling PerformSkill: {ex}");
+        }
 
         onComplete?.Invoke();
     }
