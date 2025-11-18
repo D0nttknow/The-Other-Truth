@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -7,13 +8,14 @@ using UnityEngine.UI;
 /// Per-character action panel controller (updated):
 /// - Use callbacks from CharacterEquipment so EndTurn is called only after animation/processing finishes.
 /// - Skill now waits for UseSkill onComplete callback before calling EndTurn.
+/// - Adds a small recovery timeout to avoid UI stuck if callbacks never arrive (debug only).
 /// </summary>
 [DisallowMultipleComponent]
 public class PerCharacterUIController : MonoBehaviour
 {
     [Header("References (set by TurnManager or in Inspector)")]
     public CharacterEquipment playerEquipment;
-    public TurnManager turnManager;
+    public TurnBaseSystem turnManager;
 
     [Header("UI Elements")]
     public Button normalButton;
@@ -27,11 +29,15 @@ public class PerCharacterUIController : MonoBehaviour
     // --- Added cached prev-state fields to avoid per-frame log spam ---
     private bool _prevIsTurn = false;
     private string _prevWeaponInfo = null;
-    private TurnManager.BattleState _prevTmState = (TurnManager.BattleState)(-1);
+    private TurnBaseSystem.BattleState _prevTmState = (TurnBaseSystem.BattleState)(-1);
+
+    // Recovery coroutine to avoid permanently stuck UI when callbacks fail
+    private Coroutine _recoveryCoroutine = null;
+    public float recoveryTimeoutSeconds = 5f;
 
     void Start()
     {
-        if (turnManager == null) turnManager = TurnManager.Instance;
+        if (turnManager == null) turnManager = TurnBaseSystem.Instance;
 
         if (normalButton != null) normalButton.onClick.AddListener(OnNormalClicked);
         if (skillButton != null) skillButton.onClick.AddListener(OnSkillClicked);
@@ -82,7 +88,7 @@ public class PerCharacterUIController : MonoBehaviour
         {
             var maxHpProp = ps.GetType().GetProperty("maxHp");
             var maxHp = maxHpProp != null ? maxHpProp.GetValue(ps) : "?";
-            hpText.text = $"{GetFieldInt(ps, "hp")}/{maxHp}";
+            hpText.text = string.Format("{0}/{1}", GetFieldInt(ps, "hp"), maxHp);
         }
     }
 
@@ -97,14 +103,14 @@ public class PerCharacterUIController : MonoBehaviour
 
     void UpdateInteractableState()
     {
-        var tm = turnManager ?? TurnManager.Instance;
+        var tm = turnManager ?? TurnBaseSystem.Instance;
 
         // compute current values
         var playerName = playerEquipment != null ? playerEquipment.gameObject.name : "null";
         var isTurn = (tm != null && playerEquipment != null) ? tm.IsCurrentTurn(playerEquipment.gameObject) : false;
         var weapon = playerEquipment != null ? playerEquipment.GetEquippedWeapon() : null;
         var wcInfo = weapon != null ? ("wc present cooldown=" + weapon.skillCooldownRemaining) : "wc=null";
-        var tmState = tm != null ? tm.state : (TurnManager.BattleState)(-1);
+        var tmState = tm != null ? tm.state : (TurnBaseSystem.BattleState)(-1);
 
         // Log only when something meaningful changed (avoids per-frame spam)
         bool changed = false;
@@ -124,7 +130,7 @@ public class PerCharacterUIController : MonoBehaviour
         }
 
         bool isActiveTurn = (tm != null && playerEquipment != null && tm.IsCurrentTurn(playerEquipment.gameObject)
-                             && tm.state == TurnManager.BattleState.WaitingForPlayerInput);
+                             && tm.state == TurnBaseSystem.BattleState.WaitingForPlayerInput);
 
         if (normalButton != null) normalButton.interactable = isActiveTurn;
         if (skillButton != null)
@@ -138,45 +144,51 @@ public class PerCharacterUIController : MonoBehaviour
     public void OnNormalClicked()
     {
         if (!CanAct()) return;
-        var tm = turnManager ?? TurnManager.Instance;
+        var tm = turnManager ?? TurnBaseSystem.Instance;
         if (tm == null || playerEquipment == null) return;
 
         var target = tm.selectedMonster;
         if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected"); return; }
 
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
+
+        // disable buttons immediately and start recovery timer
+        SetAllButtonsInteractable(false);
+        if (_recoveryCoroutine != null) StopCoroutine(_recoveryCoroutine);
+        _recoveryCoroutine = StartCoroutine(RecoveryEnableAfterTimeout(recoveryTimeoutSeconds));
+
         if (goAI != null)
         {
-            SetAllButtonsInteractable(false);
+            Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name);
+
+            // AttackMonster should call this callback at the hit-frame
             goAI.AttackMonster(target, () =>
             {
-                try
+                Debug.Log("[PerCharacterUI] Attack hit callback - applying damage via CharacterEquipment");
+
+                // Apply damage; when damage application completes it should call onComplete
+                playerEquipment.DoNormalAttack(target, () =>
                 {
-                    playerEquipment.DoNormalAttack(target, () =>
-                    {
-                        goAI.ReturnToStart(() =>
-                        {
-                            tm.EndTurn();
-                            SetAllButtonsInteractable(true);
-                        });
-                    });
-                }
-                catch
-                {
+                    Debug.Log("[PerCharacterUI] Damage applied callback - returning to start");
+
+                    // Return to start, then end turn once
                     goAI.ReturnToStart(() =>
                     {
-                        tm.EndTurn();
+                        Debug.Log("[PerCharacterUI] ReturnToStart complete - ending turn");
+                        if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                        if (tm != null) tm.EndTurn();
                         SetAllButtonsInteractable(true);
                     });
-                }
+                });
             });
         }
         else
         {
-            SetAllButtonsInteractable(false);
+            // fallback: no movement AI — call damage then EndTurn
             playerEquipment.DoNormalAttack(target, () =>
             {
-                tm.EndTurn();
+                if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                if (tm != null) tm.EndTurn();
                 SetAllButtonsInteractable(true);
             });
         }
@@ -185,7 +197,7 @@ public class PerCharacterUIController : MonoBehaviour
     public void OnSkillClicked()
     {
         if (!CanAct()) return;
-        var tm = turnManager ?? TurnManager.Instance;
+        var tm = turnManager ?? TurnBaseSystem.Instance;
         if (tm == null || playerEquipment == null) return;
 
         var targets = new List<GameObject>();
@@ -198,10 +210,14 @@ public class PerCharacterUIController : MonoBehaviour
         if (targets.Count == 0) { Debug.LogWarning("[PerCharacterUI] No valid skill targets"); return; }
 
         SetAllButtonsInteractable(false);
+        if (_recoveryCoroutine != null) StopCoroutine(_recoveryCoroutine);
+        _recoveryCoroutine = StartCoroutine(RecoveryEnableAfterTimeout(recoveryTimeoutSeconds));
 
+        // UseSkill will invoke onComplete when done (our CharacterEquipment.UseSkill supports callback)
         playerEquipment.UseSkill(targets, () =>
         {
-            tm.EndTurn();
+            if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+            if (tm != null) tm.EndTurn();
             SetAllButtonsInteractable(true);
         });
     }
@@ -215,9 +231,9 @@ public class PerCharacterUIController : MonoBehaviour
 
     bool CanAct()
     {
-        var tm = turnManager ?? TurnManager.Instance;
+        var tm = turnManager ?? TurnBaseSystem.Instance;
         if (tm == null || playerEquipment == null) return false;
-        return tm.state == TurnManager.BattleState.WaitingForPlayerInput && tm.IsCurrentTurn(playerEquipment.gameObject);
+        return tm.state == TurnBaseSystem.BattleState.WaitingForPlayerInput && tm.IsCurrentTurn(playerEquipment.gameObject);
     }
 
     void SetAllButtonsInteractable(bool v)
@@ -225,6 +241,14 @@ public class PerCharacterUIController : MonoBehaviour
         if (normalButton != null) normalButton.interactable = v;
         if (skillButton != null) skillButton.interactable = v;
         if (swapButton != null) swapButton.interactable = v;
+    }
+
+    IEnumerator RecoveryEnableAfterTimeout(float seconds)
+    {
+        yield return new WaitForSeconds(seconds);
+        Debug.LogWarning("[PerCharacterUIController] Recovery timeout reached (" + seconds + "s) — re-enabling buttons to avoid stuck state.");
+        SetAllButtonsInteractable(true);
+        _recoveryCoroutine = null;
     }
 
     int GetFieldInt(object obj, string name)
