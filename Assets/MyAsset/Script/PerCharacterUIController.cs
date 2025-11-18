@@ -93,6 +93,15 @@ public class PerCharacterUIController : MonoBehaviour
     void UpdateInteractableState()
     {
         var tm = turnManager ?? TurnManager.Instance;
+
+        // Debug info to help track why buttons are not interactable
+        var playerName = playerEquipment != null ? playerEquipment.gameObject.name : "null";
+        var isTurn = (tm != null && playerEquipment != null) ? tm.IsCurrentTurn(playerEquipment.gameObject) : false;
+        var weapon = playerEquipment != null ? playerEquipment.GetEquippedWeapon() : null;
+        var wcInfo = weapon != null ? ("wc present cooldown=" + weapon.skillCooldownRemaining) : "wc=null";
+        Debug.Log("[UI DEBUG] Panel=" + gameObject.name + " player=" + playerName + " isTurn=" + isTurn
+                  + " tmState=" + (tm != null ? tm.state.ToString() : "null") + " weapon=" + wcInfo);
+
         bool isActiveTurn = (tm != null && playerEquipment != null && tm.IsCurrentTurn(playerEquipment.gameObject)
                              && tm.state == TurnManager.BattleState.WaitingForPlayerInput);
 
@@ -164,7 +173,7 @@ public class PerCharacterUIController : MonoBehaviour
         for (int i = 0; i < tm.battlerObjects.Count && i < tm.battlers.Count; i++)
         {
             var go = tm.battlerObjects[i];
-            var b  = tm.battlers[i];
+            var b = tm.battlers[i];
             if (go != null && b != null && b.isMonster && b.hp > 0) targets.Add(go);
         }
         if (targets.Count == 0) { Debug.LogWarning("[PerCharacterUI] No valid skill targets"); return; }

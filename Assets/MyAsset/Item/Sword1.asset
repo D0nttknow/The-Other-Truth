@@ -15,14 +15,14 @@ MonoBehaviour:
   id: Sword1
   displayName: Sword1
   icon: {fileID: 0}
-  weaponPrefab: {fileID: 0}
+  weaponPrefab: {fileID: 5640684304243052442, guid: 76d88044b6055b6448519f5045b09b7d, type: 3}
   positionOffset: {x: 0, y: 0, z: 0}
   rotationOffset: {x: 0, y: 0, z: 0}
   category: 0
   baseDamage: 5
   normalBleedChance: 0.3
   skillBleedChance: 0.5
-  swordSkillCooldownTurns: 2
+  swordSkillCooldownTurns: 0
   bleedDuration: 2
   bleedDmgPerTurn: 2
   hammerStunChance: 0.5

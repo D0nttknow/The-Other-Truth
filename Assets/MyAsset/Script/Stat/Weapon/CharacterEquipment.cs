@@ -1,187 +1,98 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 
-/// <summary>
-/// Manages equipping weapons and swapping them. Holds a list of WeaponItem references (inventory for weapons).
-/// - Equip at index / Equip item by id
-/// - Swap to next weapon in list (during battle by input)
-/// - OnTurnStart() should be called by TurnManager when it's this player's turn start (to tick cooldown)
-/// 
-/// Adjusted: DoNormalAttack / UseSkill now accept an optional Action onComplete callback and forward it to WeaponController.
-/// </summary>
 [DisallowMultipleComponent]
 public class CharacterEquipment : MonoBehaviour
 {
-    [Tooltip("Where to mount weapon visuals (hand)")]
     public Transform weaponMount;
-
     public List<WeaponItem> ownedWeapons = new List<WeaponItem>();
-
     public WeaponItem currentWeaponItem;
+
     private GameObject currentWeaponInstance;
     private WeaponController weaponController;
 
-    public event Action<WeaponItem> OnEquipped;
-    public event Action OnUnequipped;
-
     void Start()
     {
+        Debug.Log($"[CharacterEquipment] Start on {gameObject.name} currentWeaponItem={(currentWeaponItem != null ? currentWeaponItem.displayName : "null")}, weaponMount={(weaponMount != null ? weaponMount.name : "null")}, enabled={enabled}");
+
+        // หา mount อัตโนมัติถ้ายังไม่ตั้ง (หา child ชื่อ "Hand" หรือ "WeaponMount")
         if (weaponMount == null)
         {
-            var anim = GetComponent<Animator>();
-            if (anim != null && anim.isHuman)
+            Transform hand = transform.Find("Hand") ?? transform.Find("WeaponMount");
+            if (hand != null) weaponMount = hand;
+            else
             {
-                var right = anim.GetBoneTransform(HumanBodyBones.RightHand);
-                if (right != null) weaponMount = right;
+                // สร้าง mount ถ้าไม่มี
+                GameObject go = new GameObject("WeaponMount");
+                go.transform.SetParent(transform, false);
+                go.transform.localPosition = Vector3.zero;
+                weaponMount = go.transform;
+                Debug.Log("[CharacterEquipment] Created WeaponMount at runtime");
             }
         }
+
+        // auto-equip ถ้ามี item ตั้งไว้ใน Inspector
+        if (currentWeaponItem != null)
+        {
+            Equip(currentWeaponItem);
+        }
+    }
+
+    // ให้เรียกจาก Inspector ด้วยคลิกเมนู component (ContextMenu)
+    [ContextMenu("Equip Now (Inspector)")]
+    public void EquipNowFromInspector()
+    {
+        Equip(currentWeaponItem);
     }
 
     public void Equip(WeaponItem item)
     {
-        if (item == null) { Unequip(); return; }
-        if (currentWeaponItem == item) return;
-
-        Unequip();
-
-        currentWeaponItem = item;
-
-        if (item.weaponPrefab != null && weaponMount != null)
+        if (item == null)
         {
-            currentWeaponInstance = Instantiate(item.weaponPrefab, weaponMount, false);
-            currentWeaponInstance.transform.localPosition = item.positionOffset;
-            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
-            currentWeaponInstance.transform.localScale = Vector3.one;
-
-            weaponController = currentWeaponInstance.GetComponent<WeaponController>();
-            if (weaponController == null) weaponController = currentWeaponInstance.AddComponent<WeaponController>();
-        }
-        else
-        {
-            var go = new GameObject($"Weapon_{item.displayName}");
-            go.transform.SetParent(weaponMount, false);
-            go.transform.localPosition = item.positionOffset;
-            go.transform.localEulerAngles = item.rotationOffset;
-            go.transform.localScale = Vector3.one;
-            currentWeaponInstance = go;
-            weaponController = go.AddComponent<WeaponController>();
+            Debug.LogWarning($"[CharacterEquipment] Equip called with null on {gameObject.name}");
+            return;
         }
 
-        if (weaponController != null) weaponController.ApplyWeaponData(item);
+        Debug.Log($"[CharacterEquipment] Equipping {item.displayName} on {gameObject.name} (prefab={(item.weaponPrefab != null ? item.weaponPrefab.name : "null")})");
 
-        Debug.Log($"[CharacterEquipment] Equipped {item.displayName} on {gameObject.name}");
-        OnEquipped?.Invoke(item);
-    }
-
-    public void Unequip()
-    {
+        // ลบของเก่า
         if (currentWeaponInstance != null)
         {
             Destroy(currentWeaponInstance);
             currentWeaponInstance = null;
+            weaponController = null;
         }
-        weaponController = null;
-        if (currentWeaponItem != null)
+
+        if (item.weaponPrefab != null)
         {
-            currentWeaponItem = null;
-            OnUnequipped?.Invoke();
-        }
-    }
+            currentWeaponInstance = Instantiate(item.weaponPrefab, weaponMount != null ? weaponMount : transform, false);
+            currentWeaponInstance.transform.localPosition = item.positionOffset;
+            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
 
-    public void SwapToNextWeapon()
-    {
-        if (ownedWeapons == null || ownedWeapons.Count == 0) return;
-
-        int idx = currentWeaponItem == null ? -1 : ownedWeapons.IndexOf(currentWeaponItem);
-
-        int next;
-        if (idx < 0) next = 0;
-        else next = (idx + 1) % ownedWeapons.Count;
-
-        Equip(ownedWeapons[next]);
-    }
-
-    // Updated: accept optional onComplete callback so caller can wait for animation & then EndTurn.
-    public void DoNormalAttack(GameObject target, Action onComplete = null)
-    {
-        if (weaponController != null)
-        {
-            weaponController.NormalAttack(target, onComplete);
+            weaponController = currentWeaponInstance.GetComponent<WeaponController>();
+            if (weaponController == null)
+            {
+                Debug.LogWarning("[CharacterEquipment] Prefab has no WeaponController; adding fallback component.");
+                weaponController = currentWeaponInstance.AddComponent<WeaponController>();
+            }
         }
         else
         {
-            Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weapon equipped.");
-            onComplete?.Invoke();
+            // fallback: สร้าง GameObject เปล่าและเพิ่ม WeaponController เพื่อให้ UI/logic ทำงาน
+            currentWeaponInstance = new GameObject("Weapon_" + item.displayName);
+            currentWeaponInstance.transform.SetParent(weaponMount != null ? weaponMount : transform, false);
+            currentWeaponInstance.transform.localPosition = item.positionOffset;
+            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
+            weaponController = currentWeaponInstance.AddComponent<WeaponController>();
+            Debug.Log("[CharacterEquipment] Created runtime WeaponController fallback for " + item.displayName);
         }
-    }
 
-    // Updated: UseSkill now accepts an optional onComplete callback and forwards targets to WeaponController.
-    public void UseSkill(IEnumerable<GameObject> targets, Action onComplete = null)
-    {
-        if (weaponController != null)
-        {
-            weaponController.UseSkill(targets, onComplete);
-        }
-        else
-        {
-            Debug.LogWarning("[CharacterEquipment] UseSkill: no weapon equipped.");
-            onComplete?.Invoke();
-        }
-    }
-
-    public void OnTurnStart()
-    {
-        if (weaponController != null) weaponController.OnTurnStart();
+        currentWeaponItem = item;
+        Debug.Log($"[CharacterEquipment] Equipped {item.displayName} => weaponController={(weaponController != null ? weaponController.GetType().Name : "null")}");
     }
 
     public WeaponController GetEquippedWeapon()
     {
         return weaponController;
-    }
-
-    public void EquipAtIndex(int index)
-    {
-        if (ownedWeapons == null || ownedWeapons.Count == 0) return;
-        if (index < 0 || index >= ownedWeapons.Count) return;
-        Equip(ownedWeapons[index]);
-    }
-
-    public void EquipById(string itemId, WeaponItem[] lookupList = null)
-    {
-        if (string.IsNullOrEmpty(itemId)) return;
-
-        WeaponItem found = null;
-        if (ownedWeapons != null)
-        {
-            foreach (var w in ownedWeapons)
-            {
-                if (w != null && w.id == itemId) { found = w; break; }
-            }
-        }
-
-        if (found == null && lookupList != null)
-        {
-            foreach (var w in lookupList)
-            {
-                if (w != null && w.id == itemId) { found = w; break; }
-            }
-        }
-
-        if (found != null) Equip(found);
-    }
-
-    public void AddOwnedWeapon(WeaponItem item)
-    {
-        if (item == null) return;
-        if (ownedWeapons == null) ownedWeapons = new List<WeaponItem>();
-        ownedWeapons.Add(item);
-    }
-
-    public void RemoveOwnedWeapon(WeaponItem item)
-    {
-        if (item == null || ownedWeapons == null) return;
-        if (ownedWeapons.Contains(item)) ownedWeapons.Remove(item);
-        if (currentWeaponItem == item) Unequip();
     }
 }

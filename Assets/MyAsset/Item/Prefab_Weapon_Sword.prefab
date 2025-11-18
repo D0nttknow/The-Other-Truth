@@ -9,7 +9,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 3579664000695519061}
-  - component: {fileID: 3162156317101477139}
+  - component: {fileID: 862206351187164863}
   m_Layer: 0
   m_Name: Prefab_Weapon_Sword
   m_TagString: Untagged
@@ -32,7 +32,7 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &3162156317101477139
+--- !u!114 &862206351187164863
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -44,5 +44,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 14d7d05d8fa17f34aaf90c692632d3cd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WeaponController
-  appliedItem: {fileID: 11400000, guid: e268fc27086c93a42903bb2a0e901abb, type: 2}
   skillCooldownRemaining: 0
+  skillCooldown: 0
+  normalBleedChance: 0
+  skillBleedChance: 0
