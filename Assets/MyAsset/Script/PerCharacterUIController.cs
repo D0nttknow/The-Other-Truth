@@ -35,6 +35,10 @@ public class PerCharacterUIController : MonoBehaviour
     private Coroutine _recoveryCoroutine = null;
     public float recoveryTimeoutSeconds = 5f;
 
+    // Recovery coroutine to avoid permanently stuck UI when callbacks fail
+    private Coroutine _recoveryCoroutine = null;
+    public float recoveryTimeoutSeconds = 5f;
+
     void Start()
     {
         if (turnManager == null) turnManager = TurnBaseSystem.Instance;
@@ -159,7 +163,11 @@ public class PerCharacterUIController : MonoBehaviour
 
         if (goAI != null)
         {
+<<<<<<< HEAD
             Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name);
+=======
+            Debug.Log($"[PerCharacterUI] OnNormalClicked start player={playerEquipment.gameObject.name}");
+>>>>>>> 7bc1030dbed97e1d598a8e4f7d0c07fc51c5dab2
 
             // AttackMonster should call this callback at the hit-frame
             goAI.AttackMonster(target, () =>
@@ -246,7 +254,11 @@ public class PerCharacterUIController : MonoBehaviour
     IEnumerator RecoveryEnableAfterTimeout(float seconds)
     {
         yield return new WaitForSeconds(seconds);
+<<<<<<< HEAD
         Debug.LogWarning("[PerCharacterUIController] Recovery timeout reached (" + seconds + "s) — re-enabling buttons to avoid stuck state.");
+=======
+        Debug.LogWarning($"[PerCharacterUIController] Recovery timeout reached ({seconds}s) — re-enabling buttons to avoid stuck state.");
+>>>>>>> 7bc1030dbed97e1d598a8e4f7d0c07fc51c5dab2
         SetAllButtonsInteractable(true);
         _recoveryCoroutine = null;
     }
