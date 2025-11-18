@@ -24,6 +24,11 @@ public class PerCharacterUIController : MonoBehaviour
     public Text hpText;
     public Text skillCooldownText;
 
+    // --- Added cached prev-state fields to avoid per-frame log spam ---
+    private bool _prevIsTurn = false;
+    private string _prevWeaponInfo = null;
+    private TurnManager.BattleState _prevTmState = (TurnManager.BattleState)(-1);
+
     void Start()
     {
         if (turnManager == null) turnManager = TurnManager.Instance;
@@ -94,13 +99,29 @@ public class PerCharacterUIController : MonoBehaviour
     {
         var tm = turnManager ?? TurnManager.Instance;
 
-        // Debug info to help track why buttons are not interactable
+        // compute current values
         var playerName = playerEquipment != null ? playerEquipment.gameObject.name : "null";
         var isTurn = (tm != null && playerEquipment != null) ? tm.IsCurrentTurn(playerEquipment.gameObject) : false;
         var weapon = playerEquipment != null ? playerEquipment.GetEquippedWeapon() : null;
         var wcInfo = weapon != null ? ("wc present cooldown=" + weapon.skillCooldownRemaining) : "wc=null";
-        Debug.Log("[UI DEBUG] Panel=" + gameObject.name + " player=" + playerName + " isTurn=" + isTurn
-                  + " tmState=" + (tm != null ? tm.state.ToString() : "null") + " weapon=" + wcInfo);
+        var tmState = tm != null ? tm.state : (TurnManager.BattleState)(-1);
+
+        // Log only when something meaningful changed (avoids per-frame spam)
+        bool changed = false;
+        if (isTurn != _prevIsTurn) changed = true;
+        if (_prevWeaponInfo == null || wcInfo != _prevWeaponInfo) changed = true;
+        if (tmState != _prevTmState) changed = true;
+
+        if (changed)
+        {
+            Debug.Log("[UI DEBUG] Panel=" + gameObject.name + " player=" + playerName + " isTurn=" + isTurn
+                      + " tmState=" + (tm != null ? tm.state.ToString() : "null") + " weapon=" + wcInfo);
+
+            // update cached prev values
+            _prevIsTurn = isTurn;
+            _prevWeaponInfo = wcInfo;
+            _prevTmState = tmState;
+        }
 
         bool isActiveTurn = (tm != null && playerEquipment != null && tm.IsCurrentTurn(playerEquipment.gameObject)
                              && tm.state == TurnManager.BattleState.WaitingForPlayerInput);
@@ -131,7 +152,6 @@ public class PerCharacterUIController : MonoBehaviour
             {
                 try
                 {
-                    // Use callback-based DoNormalAttack so we wait for weapon effects too
                     playerEquipment.DoNormalAttack(target, () =>
                     {
                         goAI.ReturnToStart(() =>
@@ -153,7 +173,6 @@ public class PerCharacterUIController : MonoBehaviour
         }
         else
         {
-            // fallback: call with callback then EndTurn
             SetAllButtonsInteractable(false);
             playerEquipment.DoNormalAttack(target, () =>
             {
@@ -180,7 +199,6 @@ public class PerCharacterUIController : MonoBehaviour
 
         SetAllButtonsInteractable(false);
 
-        // Use callback form so EndTurn happens only after skill has finished (animation/effects)
         playerEquipment.UseSkill(targets, () =>
         {
             tm.EndTurn();
