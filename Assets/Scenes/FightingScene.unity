@@ -377,7 +377,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::WeaponUIController
   playerEquipment: {fileID: 1373171032}
-  turnManager: {fileID: 1795397622}
+  turnManager: {fileID: 0}
   normalButton: {fileID: 852573518}
   normalIcon: {fileID: 0}
   normalLabel: {fileID: 0}
@@ -731,6 +731,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AttachHealthBar
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
+  forceCreateEvenIfManagerExists: 0
 --- !u!114 &226837742
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1702,6 +1703,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AttachHealthBar
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
+  forceCreateEvenIfManagerExists: 0
 --- !u!114 &804065252
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2452,6 +2454,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AttachHealthBar
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
+  forceCreateEvenIfManagerExists: 0
 --- !u!1 &925734507
 GameObject:
   m_ObjectHideFlags: 0
@@ -4129,7 +4132,7 @@ MonoBehaviour:
   _maxHp: 20
   _atk: 1
   _def: 6
-  _speed: 10
+  _speed: 11
   _level: 1
   headTransform: {fileID: 0}
   hpUiOffset: {x: 0, y: 1.6, z: 0}
@@ -4208,6 +4211,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AttachHealthBar
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
+  forceCreateEvenIfManagerExists: 0
 --- !u!114 &1373171030
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5348,7 +5352,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EndDisButton
   playerActionButton: {fileID: 852573518}
-  turnManager: {fileID: 1795397622}
+  turnManager: {fileID: 0}
 --- !u!114 &1743052211
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5370,6 +5374,7 @@ MonoBehaviour:
   nameText: {fileID: 0}
   hpText: {fileID: 0}
   skillCooldownText: {fileID: 0}
+  recoveryTimeoutSeconds: 5
 --- !u!1 &1760740181
 GameObject:
   m_ObjectHideFlags: 0
@@ -5588,6 +5593,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::AttachHealthBar
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
+  forceCreateEvenIfManagerExists: 0
 --- !u!114 &1792964420
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5663,6 +5669,7 @@ MonoBehaviour:
   persistentPlayerUIPanels: []
   defaultCanvas: {fileID: 1743052208}
   filterPersistentToParticipants: 0
+  manageHealthbars: 1
   updateTurnOrderUI: 1
   defeatedRewards: []
   defeatedEnemies: []

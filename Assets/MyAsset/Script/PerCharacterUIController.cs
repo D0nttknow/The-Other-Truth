@@ -9,6 +9,12 @@ using UnityEngine.UI;
 /// - Use callbacks from CharacterEquipment so EndTurn is called only after animation/processing finishes.
 /// - Skill now waits for UseSkill onComplete callback before calling EndTurn.
 /// - Adds a small recovery timeout to avoid UI stuck if callbacks never arrive (debug only).
+/// 
+/// Minor improvements added:
+/// - Cache PlayerStat reference when possible to avoid repeated GetComponent calls every frame.
+/// - Provide a small CacheComponents() helper and call it from RefreshAll so the component is robust when
+///   TurnBaseSystem assigns playerEquipment after this component's Start.
+/// - Slightly reduce per-frame allocation by avoiding repeated reflection calls when not needed.
 /// </summary>
 [DisallowMultipleComponent]
 public class PerCharacterUIController : MonoBehaviour
@@ -35,9 +41,8 @@ public class PerCharacterUIController : MonoBehaviour
     private Coroutine _recoveryCoroutine = null;
     public float recoveryTimeoutSeconds = 5f;
 
-    // Recovery coroutine to avoid permanently stuck UI when callbacks fail
-    private Coroutine _recoveryCoroutine = null;
-    public float recoveryTimeoutSeconds = 5f;
+    // cached components to avoid repeated GetComponent calls
+    private PlayerStat _playerStat = null;
 
     void Start()
     {
@@ -47,6 +52,7 @@ public class PerCharacterUIController : MonoBehaviour
         if (skillButton != null) skillButton.onClick.AddListener(OnSkillClicked);
         if (swapButton != null) swapButton.onClick.AddListener(OnSwapClicked);
 
+        CacheComponents();
         RefreshAll();
     }
 
@@ -64,8 +70,18 @@ public class PerCharacterUIController : MonoBehaviour
         RefreshHP();
     }
 
+    // Cache references that are safe to reuse between frames.
+    // Call whenever playerEquipment might be (re)assigned.
+    void CacheComponents()
+    {
+        _playerStat = playerEquipment != null ? playerEquipment.GetComponent<PlayerStat>() : null;
+    }
+
     public void RefreshAll()
     {
+        // Re-cache components in case TurnBaseSystem assigned playerEquipment programmatically after this component's Start
+        CacheComponents();
+
         RefreshIcon();
         RefreshHP();
         RefreshCooldown();
@@ -87,12 +103,16 @@ public class PerCharacterUIController : MonoBehaviour
     void RefreshHP()
     {
         if (hpText == null || playerEquipment == null) return;
-        var ps = playerEquipment.GetComponent<PlayerStat>();
+
+        // use cached PlayerStat if available
+        var ps = _playerStat ?? playerEquipment.GetComponent<PlayerStat>();
         if (ps != null)
         {
             var maxHpProp = ps.GetType().GetProperty("maxHp");
             var maxHp = maxHpProp != null ? maxHpProp.GetValue(ps) : "?";
             hpText.text = string.Format("{0}/{1}", GetFieldInt(ps, "hp"), maxHp);
+            // cache for subsequent frames
+            _playerStat = ps;
         }
     }
 
@@ -163,11 +183,7 @@ public class PerCharacterUIController : MonoBehaviour
 
         if (goAI != null)
         {
-<<<<<<< HEAD
             Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name);
-=======
-            Debug.Log($"[PerCharacterUI] OnNormalClicked start player={playerEquipment.gameObject.name}");
->>>>>>> 7bc1030dbed97e1d598a8e4f7d0c07fc51c5dab2
 
             // AttackMonster should call this callback at the hit-frame
             goAI.AttackMonster(target, () =>
@@ -254,11 +270,7 @@ public class PerCharacterUIController : MonoBehaviour
     IEnumerator RecoveryEnableAfterTimeout(float seconds)
     {
         yield return new WaitForSeconds(seconds);
-<<<<<<< HEAD
         Debug.LogWarning("[PerCharacterUIController] Recovery timeout reached (" + seconds + "s) — re-enabling buttons to avoid stuck state.");
-=======
-        Debug.LogWarning($"[PerCharacterUIController] Recovery timeout reached ({seconds}s) — re-enabling buttons to avoid stuck state.");
->>>>>>> 7bc1030dbed97e1d598a8e4f7d0c07fc51c5dab2
         SetAllButtonsInteractable(true);
         _recoveryCoroutine = null;
     }

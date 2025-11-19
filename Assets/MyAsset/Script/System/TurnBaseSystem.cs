@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -51,6 +52,9 @@ public class TurnBaseSystem : MonoBehaviour
     [Tooltip("If enabled, filter persistent panels to participants during actions")]
     public bool filterPersistentToParticipants = false;
 
+    [Tooltip("If true, TurnBaseSystem will create and manage healthbars. Other scripts (AttachHealthBar / Stat) should skip creating their own healthbars.")]
+    public bool manageHealthbars = true;
+
     private Dictionary<GameObject, GameObject> playerToPanel = new Dictionary<GameObject, GameObject>();
     private Dictionary<GameObject, GameObject> persistentPlayerToPanel = new Dictionary<GameObject, GameObject>();
 
@@ -65,6 +69,9 @@ public class TurnBaseSystem : MonoBehaviour
     [Header("Per-character UI")]
     public GameObject perCharacterPanelPrefab;
     private Dictionary<GameObject, GameObject> battlerToPanel = new Dictionary<GameObject, GameObject>();
+
+    // internal coroutine handles
+    private Coroutine _delayedHealthbarCoroutine = null;
 
     public GameObject CurrentBattlerObject
     {
@@ -84,6 +91,44 @@ public class TurnBaseSystem : MonoBehaviour
 
     void Start()
     {
+        Debug.Log("[TurnBaseSystem] START on GameObject='" + gameObject.name + "' characterObjects != null? "
+                  + (characterObjects != null) + " count=" + (characterObjects != null ? characterObjects.Count : -1)
+                  + " battlerObjects != null? " + (battlerObjects != null) + " count=" + (battlerObjects != null ? battlerObjects.Count : -1));
+
+        // Auto-populate characterObjects if none assigned
+        if ((characterObjects == null || characterObjects.Count == 0))
+        {
+            var foundList = new List<GameObject>();
+            var all = FindObjectsOfType<MonoBehaviour>(true);
+            foreach (var mb in all)
+            {
+                if (mb == null) continue;
+                if (mb is ICharacterStat || mb is IMonsterStat)
+                {
+                    if (!foundList.Contains(mb.gameObject))
+                        foundList.Add(mb.gameObject);
+                }
+            }
+
+            // deterministic ordering so mapping is stable across runs
+            if (foundList.Count > 1)
+            {
+                foundList = foundList.OrderBy(g => g.name, StringComparer.Ordinal)
+                                     .ThenBy(g => g.GetInstanceID())
+                                     .ToList();
+            }
+
+            if (foundList.Count > 0)
+            {
+                characterObjects = foundList;
+                Debug.Log("[TurnBaseSystem] Auto-populated characterObjects count=" + characterObjects.Count);
+            }
+            else
+            {
+                Debug.Log("[TurnBaseSystem] No ICharacterStat/IMonsterStat found for auto-populate.");
+            }
+        }
+
         if (characterObjects == null || characterObjects.Count == 0)
             Debug.LogWarning("[TurnBaseSystem] characterObjects is null or empty at Start. Make sure to populate it in the Inspector or before Start.");
 
@@ -101,18 +146,38 @@ public class TurnBaseSystem : MonoBehaviour
             if (characterInfoPanel != null) Debug.Log("[TurnBaseSystem] characterInfoPanel auto-assigned to '" + characterInfoPanel.gameObject.name + "'");
         }
 
-        if (HealthBarManager.Instance != null)
+        // Create per-character panels based on battlerObjects (source of truth)
+        CreateOrAssignPerCharacterPanels();
+
+        // Create healthbars per battlerObject to keep mapping consistent if this manager is responsible
+        if (manageHealthbars && HealthBarManager.Instance != null)
         {
-            HealthBarManager.Instance.CreateForAllFromTurnManager();
-            Debug.Log("[TurnBaseSystem] Requested HealthBarManager to CreateForAllFromTurnManager()");
+            if (battlerObjects != null && battlerObjects.Count > 0)
+            {
+                for (int i = 0; i < battlerObjects.Count; i++)
+                {
+                    var go = battlerObjects[i];
+                    if (go == null) continue;
+                    HealthBarManager.Instance.CreateFor(go, go.transform);
+                    Debug.Log("[TurnBaseSystem] HealthBarManager.CreateFor called for index=" + i + " go=" + go.name + " id=" + go.GetInstanceID());
+                }
+            }
+            else
+            {
+                if (_delayedHealthbarCoroutine != null) StopCoroutine(_delayedHealthbarCoroutine);
+                _delayedHealthbarCoroutine = StartCoroutine(DelayedHealthbarCreate(0.1f, 10));
+                Debug.Log("[TurnBaseSystem] Scheduled delayed per-battler healthbar creation (battlerObjects empty at Start).");
+            }
+        }
+        else if (!manageHealthbars)
+        {
+            Debug.Log("[TurnBaseSystem] manageHealthbars is false - skipping healthbar creation here. Other scripts should create healthbars.");
         }
 
         UpdatePlayerPanelMapping();
         EnsurePersistentPanelsVisible();
         RefreshTurnOrderUI();
         UpdateRoundUI();
-
-        CreateOrAssignPerCharacterPanels();
 
         StartTurn();
     }
@@ -163,12 +228,26 @@ public class TurnBaseSystem : MonoBehaviour
             Debug.LogWarning("[TurnBaseSystem] GameObject '" + go.name + "' has no ICharacterStat or IMonsterStat - skipped when building turn order.");
         }
 
-        pairList = pairList.OrderByDescending(p => p.battler.speed).ToList();
+        // deterministic sort: primary = speed desc, secondary = name, tertiary = instance id
+        pairList = pairList
+            .OrderByDescending(p => p.battler.speed)
+            .ThenBy(p => p.go.name, StringComparer.Ordinal)
+            .ThenBy(p => p.go.GetInstanceID())
+            .ToList();
 
         foreach (var p in pairList)
         {
             battlers.Add(p.battler);
             battlerObjects.Add(p.go);
+        }
+
+        // Debug listing for verification
+        Debug.Log("[TurnBaseSystem] BuildBattlerListsFromCharacterObjects result:");
+        for (int i = 0; i < battlers.Count; i++)
+        {
+            var goName = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].name : "null";
+            var id = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].GetInstanceID().ToString() : "-";
+            Debug.Log($" index={i} battler={battlers[i].name} go={goName} id={id} speed={battlers[i].speed}");
         }
 
         if (turnIndex < 0 || turnIndex >= battlers.Count) turnIndex = 0;
@@ -253,8 +332,53 @@ public class TurnBaseSystem : MonoBehaviour
         if (turnIndex >= battlers.Count) turnIndex = 0;
         if (turnIndex >= battlerObjects.Count || battlerObjects[turnIndex] == null) { Debug.LogWarning("[TurnBaseSystem] No valid battler found after attempts."); HideAllPlayerUI(); return; }
 
-        Battler current = (turnIndex < battlers.Count) ? battlers[turnIndex] : null;
-        GameObject obj = (turnIndex < battlerObjects.Count) ? battlerObjects[turnIndex] : null;
+        // ---------------- HOTFIX: robust mapping battler -> GameObject ----------------
+        Battler current = null;
+        GameObject obj = null;
+
+        if (turnIndex >= 0 && turnIndex < battlers.Count)
+            current = battlers[turnIndex];
+
+        // Try direct index mapping first
+        if (current != null && turnIndex >= 0 && turnIndex < battlerObjects.Count && battlerObjects[turnIndex] != null)
+        {
+            obj = battlerObjects[turnIndex];
+
+            // sanity check: if battler.name != GameObject.name, attempt to find correct GameObject by name
+            if (!string.Equals(current.name, obj.name, StringComparison.Ordinal))
+            {
+                Debug.LogWarning($"[TurnBaseSystem] Name mismatch at index {turnIndex}: battler='{current.name}' but battlerObjects[{turnIndex}]='{obj.name}'. Searching for matching GameObject.");
+                int foundIdx = battlerObjects.FindIndex(go => go != null && string.Equals(go.name, current.name, StringComparison.Ordinal));
+                if (foundIdx >= 0)
+                {
+                    obj = battlerObjects[foundIdx];
+                    Debug.LogWarning($"[TurnBaseSystem] Remapped battler '{current.name}' -> battlerObjects[{foundIdx}] ('{obj.name}'). Updating turnIndex for consistency.");
+                    turnIndex = foundIdx;
+                }
+            }
+        }
+        else if (current != null)
+        {
+            // index out of range or null at index -> try to find matching go by name (best-effort)
+            int foundIdx = battlerObjects.FindIndex(go => go != null && string.Equals(go.name, current.name, StringComparison.Ordinal));
+            if (foundIdx >= 0)
+            {
+                obj = battlerObjects[foundIdx];
+                Debug.LogWarning($"[TurnBaseSystem] Found battlerObjects[{foundIdx}] matching battler '{current.name}'. Using that GameObject and setting turnIndex={foundIdx}.");
+                turnIndex = foundIdx;
+            }
+            else
+            {
+                // last-resort: use first available GameObject but warn (indicates lists are out of sync)
+                obj = battlerObjects.FirstOrDefault(go => go != null);
+                Debug.LogWarning($"[TurnBaseSystem] Could not find GameObject matching battler '{(current != null ? current.name : "null")}'. Falling back to first available GameObject '{(obj != null ? obj.name : "null")}'. This likely indicates lists are out of sync.");
+            }
+        }
+        else
+        {
+            obj = null;
+        }
+        // ---------------------------------------------------------------------------
 
         EnsurePersistentPanelsVisible();
         RefreshTurnOrderUI();
@@ -308,14 +432,11 @@ public class TurnBaseSystem : MonoBehaviour
     }
 
     // Called when a player's movement/ReturnToStart finishes in previous flow
-    // Keep for compatibility with older code that passed this as callback
     public void OnPlayerReturned()
     {
-        // Default behavior: end turn
         EndTurn();
     }
 
-    // Compatibility helper - allow UI/targets to notify selection like previous TurnManager.OnMonsterSelected
     public void OnMonsterSelected(GameObject monster)
     {
         selectedMonster = monster;
@@ -362,6 +483,54 @@ public class TurnBaseSystem : MonoBehaviour
         if (wc != null) { try { wc.OnTurnStart(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception in WeaponController.OnTurnStart for " + go.name + ": " + ex); } }
     }
 
+    // ---------- Cleaning / removal / record ----------
+    void CleanUpDeadBattlers()
+    {
+        if (battlerObjects == null) return;
+        for (int i = battlerObjects.Count - 1; i >= 0; i--)
+        {
+            bool remove = false;
+            if (battlerObjects[i] == null)
+            {
+                Debug.Log("[TurnBaseSystem] Removing dead/null battler at index " + i + " (GO null)");
+                remove = true;
+            }
+            else if (i < battlers.Count && battlers[i].hp <= 0)
+            {
+                Debug.Log("[TurnBaseSystem] Removing dead battler at index " + i + " (hp<=0)");
+                if (i < battlers.Count && battlers[i].isMonster)
+                {
+                    var ms = battlerObjects[i].GetComponent<IMonsterStat>();
+                    if (ms != null) RecordEnemyDefeated(ms);
+                    else RecordEnemyDefeated(battlerObjects[i]);
+                }
+                remove = true;
+            }
+
+            if (remove)
+            {
+                var removedGO = battlerObjects[i];
+                if (battlerToPanel != null && removedGO != null && battlerToPanel.TryGetValue(removedGO, out var panel) && panel != null) { Destroy(panel); battlerToPanel.Remove(removedGO); }
+
+                // remove healthbar if present
+                if (HealthBarManager.Instance != null && removedGO != null)
+                {
+                    try { HealthBarManager.Instance.RemoveFor(removedGO); } catch { }
+                }
+
+                if (i < battlerObjects.Count) battlerObjects.RemoveAt(i);
+                if (i < battlers.Count) battlers.RemoveAt(i);
+                if (removedGO != null && actedThisRound.Contains(removedGO)) actedThisRound.Remove(removedGO);
+                if (turnIndex >= battlers.Count) turnIndex = Math.Max(0, battlers.Count - 1);
+            }
+        }
+
+        UpdatePlayerPanelMapping();
+        CheckGameEnd();
+        RefreshTurnOrderUI();
+        CreateOrAssignPerCharacterPanels();
+    }
+
     public void RemoveBattler(GameObject go, bool recordIfMonster = true)
     {
         if (go == null) return;
@@ -376,6 +545,13 @@ public class TurnBaseSystem : MonoBehaviour
             }
 
             if (battlerToPanel != null && battlerToPanel.TryGetValue(go, out var panel) && panel != null) { Destroy(panel); battlerToPanel.Remove(go); }
+
+            // remove healthbar for this GO if HealthBarManager tracking it
+            if (HealthBarManager.Instance != null)
+            {
+                try { HealthBarManager.Instance.RemoveFor(go); } catch { }
+            }
+
             if (idx < battlerObjects.Count) battlerObjects.RemoveAt(idx);
             if (idx < battlers.Count) battlers.RemoveAt(idx);
             if (actedThisRound.Contains(go)) actedThisRound.Remove(go);
@@ -429,50 +605,96 @@ public class TurnBaseSystem : MonoBehaviour
             Debug.Log("[TurnBaseSystem] Duplicate Reward ignored for " + id + " exp=" + ms.expValue);
         }
     }
-    // ------------------------------------------------------------
 
-    void CleanUpDeadBattlers()
-    {
-        if (battlerObjects == null) return;
-        for (int i = battlerObjects.Count - 1; i >= 0; i--)
-        {
-            bool remove = false;
-            if (battlerObjects[i] == null) { Debug.Log("[TurnBaseSystem] Removing dead/null battler at index " + i + " (GO null)"); remove = true; }
-            else if (i < battlers.Count && battlers[i].hp <= 0)
-            {
-                Debug.Log("[TurnBaseSystem] Removing dead battler at index " + i + " (hp<=0)");
-                if (i < battlers.Count && battlers[i].isMonster) { var ms = battlerObjects[i].GetComponent<IMonsterStat>(); if (ms != null) RecordEnemyDefeated(ms); else RecordEnemyDefeated(battlerObjects[i]); }
-                remove = true;
-            }
-            if (remove)
-            {
-                var removedGO = battlerObjects[i];
-                if (battlerToPanel != null && removedGO != null && battlerToPanel.TryGetValue(removedGO, out var panel) && panel != null) { Destroy(panel); battlerToPanel.Remove(removedGO); }
-                if (i < battlerObjects.Count) battlerObjects.RemoveAt(i);
-                if (i < battlers.Count) battlers.RemoveAt(i);
-                if (removedGO != null && actedThisRound.Contains(removedGO)) actedThisRound.Remove(removedGO);
-                if (turnIndex >= battlers.Count) turnIndex = Math.Max(0, battlers.Count - 1);
-            }
-        }
-        UpdatePlayerPanelMapping(); CheckGameEnd(); RefreshTurnOrderUI(); CreateOrAssignPerCharacterPanels();
-    }
-
+    // ---------- Panels + Healthbars ----------
     void CreateOrAssignPerCharacterPanels()
     {
         if (perCharacterPanelPrefab == null) return;
         Transform parent = defaultCanvas != null ? defaultCanvas.transform : null;
         if (parent == null) { var found = FindObjectOfType<Canvas>(true); if (found != null) parent = found.transform; }
         if (parent == null) { Debug.LogWarning("[TurnBaseSystem] No Canvas found to parent per-character panels. Set defaultCanvas or add a Canvas in scene."); return; }
-        var existingKeys = battlerToPanel.Keys.ToList();
-        foreach (var key in existingKeys) { if (!battlerObjects.Contains(key)) { if (battlerToPanel.TryGetValue(key, out var oldP) && oldP != null) Destroy(oldP); battlerToPanel.Remove(key); } }
+
+        // Destroy existing panels and recreate deterministically
+        if (battlerToPanel != null && battlerToPanel.Count > 0)
+        {
+            foreach (var kv in battlerToPanel.ToList())
+            {
+                try { if (kv.Value != null) Destroy(kv.Value); } catch { }
+            }
+            battlerToPanel.Clear();
+        }
+
         for (int i = 0; i < battlerObjects.Count && i < battlers.Count; i++)
         {
-            var go = battlerObjects[i]; if (go == null) continue; if (battlerToPanel.ContainsKey(go)) continue;
+            var go = battlerObjects[i];
+            if (go == null) continue;
+
             var panel = Instantiate(perCharacterPanelPrefab, parent, false);
+            panel.name = $"PerCharacterPanel_{i}_{go.name}_{go.GetInstanceID()}";
+
             var ui = panel.GetComponent<PerCharacterUIController>();
-            if (ui != null) { ui.playerEquipment = go.GetComponent<CharacterEquipment>(); ui.turnManager = this; try { ui.RefreshAll(); } catch { } }
+            if (ui != null)
+            {
+                ui.playerEquipment = go.GetComponent<CharacterEquipment>();
+                ui.turnManager = this;
+                try { ui.RefreshAll(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] ui.RefreshAll exception: " + ex); }
+            }
+
             battlerToPanel[go] = panel;
+            Debug.Log($"[TurnBaseSystem] Created per-character panel: index={i}, go={go.name}, id={go.GetInstanceID()}, panel={panel.name}");
         }
+    }
+
+    private IEnumerator DelayedHealthbarCreate(float delaySeconds, int attempts)
+    {
+        int tries = 0;
+        while (tries < attempts)
+        {
+            yield return new WaitForSeconds(delaySeconds);
+            tries++;
+
+            if (!manageHealthbars)
+            {
+                Debug.Log("[TurnBaseSystem] DelayedHealthbarCreate: manageHealthbars = false, aborting delayed healthbar creation.");
+                _delayedHealthbarCoroutine = null;
+                yield break;
+            }
+
+            if (battlerObjects != null && battlerObjects.Count > 0)
+            {
+                if (HealthBarManager.Instance != null)
+                {
+                    for (int i = 0; i < battlerObjects.Count; i++)
+                    {
+                        var go = battlerObjects[i];
+                        if (go == null) continue;
+                        HealthBarManager.Instance.CreateFor(go, go.transform);
+                        Debug.Log("[TurnBaseSystem] Delayed: CreateFor called for " + go.name + " on attempt " + tries + " id=" + go.GetInstanceID());
+                    }
+                }
+                _delayedHealthbarCoroutine = null;
+                yield break;
+            }
+
+            if (characterObjects != null && characterObjects.Count > 0)
+            {
+                if (HealthBarManager.Instance != null)
+                {
+                    for (int i = 0; i < characterObjects.Count; i++)
+                    {
+                        var go = characterObjects[i];
+                        if (go == null) continue;
+                        HealthBarManager.Instance.CreateFor(go, go.transform);
+                        Debug.Log("[TurnBaseSystem] Delayed: CreateFor called for characterObjects " + go.name + " on attempt " + tries);
+                    }
+                }
+                _delayedHealthbarCoroutine = null;
+                yield break;
+            }
+        }
+
+        Debug.LogWarning("[TurnBaseSystem] DelayedHealthbarCreate gave up after " + attempts + " attempts; no characters found.");
+        _delayedHealthbarCoroutine = null;
     }
 
     void CheckGameEnd()
@@ -514,31 +736,4 @@ public class TurnBaseSystem : MonoBehaviour
     void HideAllPersistentPanels() { /* keep previous logic */ }
     void HideAllPlayerUI() { HideTransientPlayerUI(); HideAllPersistentPanels(); }
     void RefreshHPBars() { /* optional helper */ }
-
-    // Compatibility shim: keep TurnManager type around to avoid breaking other scripts
-}
-[Obsolete("TurnManager is moved to TurnBaseSystem. Use TurnBaseSystem.Instance instead.")]
-public class TurnManager : TurnBaseSystem
-{
-    // Provide a compatibility static Instance (returns an instance of TurnManager if available)
-    public new static TurnManager Instance
-    {
-        get
-        {
-            var existing = UnityEngine.Object.FindObjectOfType<TurnManager>();
-            if (existing != null) return existing;
-
-            if (TurnBaseSystem.Instance is TurnManager tm) return tm;
-
-            if (TurnBaseSystem.Instance != null)
-            {
-                var go = TurnBaseSystem.Instance.gameObject;
-                var added = go.GetComponent<TurnManager>();
-                if (added != null) return added;
-                return go.AddComponent<TurnManager>();
-            }
-
-            return null;
-        }
-    }
 }
