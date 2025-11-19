@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using GameRaiwaa.Stat; // ∂È“ BleedEffect/Status Õ¬ŸË∑’Ëπ’Ë
+using GameRaiwaa.Stat; // ‡∏ñ‡πâ‡∏≤ BleedEffect/Status ‡∏≠‡∏¢‡∏π‡πà‡∏ó‡∏µ‡πà‡∏ô‡∏µ‡πà
 
 /// <summary>
-/// SwordWeapon: ‚§È¥µ—«Õ¬Ë“ß ”À√—∫°“√∑” damage + ¡’‚Õ°“ ∑”„ÀÈµ‘¥ Bleed
-/// - „ Ë Debug.Log ‡æ◊ËÕ™Ë«¬¥’∫—° flow
-/// - æ¬“¬“¡„™È reflection „π°“√‡√’¬° StatusManager.ApplyStatus À“° type/™◊ËÕ‰¡Ëµ√ß°—π
-/// - ‡√’¬° BleedingIntegrationExample.OnBleedingApplied / HealthBarManager ‡æ◊ËÕ· ¥ß‰Õ§Õπ∫π healthbar
+/// SwordWeapon: ‡πÇ‡∏Ñ‡πâ‡∏î‡∏ï‡∏±‡∏ß‡∏≠‡∏¢‡πà‡∏≤‡∏á‡∏™‡∏≥‡∏´‡∏£‡∏±‡∏ö‡∏Å‡∏≤‡∏£‡∏ó‡∏≥ damage + ‡∏°‡∏µ‡πÇ‡∏≠‡∏Å‡∏≤‡∏™‡∏ó‡∏≥‡πÉ‡∏´‡πâ‡∏ï‡∏¥‡∏î Bleed
+/// - ‡πÉ‡∏™‡πà Debug.Log ‡πÄ‡∏û‡∏∑‡πà‡∏≠‡∏ä‡πà‡∏ß‡∏¢‡∏î‡∏µ‡∏ö‡∏±‡∏Å flow
+/// - ‡∏û‡∏¢‡∏≤‡∏¢‡∏≤‡∏°‡πÉ‡∏ä‡πâ reflection ‡πÉ‡∏ô‡∏Å‡∏≤‡∏£‡πÄ‡∏£‡∏µ‡∏¢‡∏Å StatusManager.ApplyStatus ‡∏´‡∏≤‡∏Å type/‡∏ä‡∏∑‡πà‡∏≠‡πÑ‡∏°‡πà‡∏ï‡∏£‡∏á‡∏Å‡∏±‡∏ô
+/// - ‡πÄ‡∏£‡∏µ‡∏¢‡∏Å BleedingIntegrationExample.OnBleedingApplied / HealthBarManager ‡πÄ‡∏û‡∏∑‡πà‡∏≠‡πÅ‡∏™‡∏î‡∏á‡πÑ‡∏≠‡∏Ñ‡∏≠‡∏ô‡∏ö‡∏ô healthbar
 /// 
-/// «‘∏’„™È:
-/// - «“ß‰ø≈Ïπ’È„π Assets/.../Script/... (‡™Ëπ Assets/MyAsset/Script/Stat/Weapon/SwordWeapon.cs)
-/// - ·πË„®«Ë“ BleedEffect, StatusManager, HealthBarManager, BleedingIntegrationExample Õ¬ŸË„π‚ª√‡®§
-/// - ‡™◊ËÕ¡§Ë“ WeaponItem ºË“π ApplyWeaponData ‡¡◊ËÕ equip À√◊Õ instantiate prefab
+/// ‡∏ß‡∏¥‡∏ò‡∏µ‡πÉ‡∏ä‡πâ:
+/// - ‡∏ß‡∏≤‡∏á‡πÑ‡∏ü‡∏•‡πå‡∏ô‡∏µ‡πâ‡πÉ‡∏ô Assets/.../Script/... (‡πÄ‡∏ä‡πà‡∏ô Assets/MyAsset/Script/Stat/Weapon/SwordWeapon.cs)
+/// - ‡πÅ‡∏ô‡πà‡πÉ‡∏à‡∏ß‡πà‡∏≤ BleedEffect, StatusManager, HealthBarManager, BleedingIntegrationExample ‡∏≠‡∏¢‡∏π‡πà‡πÉ‡∏ô‡πÇ‡∏õ‡∏£‡πÄ‡∏à‡∏Ñ
+/// - ‡πÄ‡∏ä‡∏∑‡πà‡∏≠‡∏°‡∏Ñ‡πà‡∏≤ WeaponItem ‡∏ú‡πà‡∏≤‡∏ô ApplyWeaponData ‡πÄ‡∏°‡∏∑‡πà‡∏≠ equip ‡∏´‡∏£‡∏∑‡∏≠ instantiate prefab
 /// </summary>
 public class SwordWeapon : MonoBehaviour
 {
@@ -36,12 +36,12 @@ public class SwordWeapon : MonoBehaviour
     {
         if (target == null) return;
 
-        Debug.Log($"[SwordWeapon] NormalAttack -> target={target.name}, baseDamage={baseDamage}");
+        Debug.Log($"[SwordWeapon] NormalAttack -> target={{target.name}}, baseDamage={{baseDamage}}");
         DealDamageToTarget(target, baseDamage);
 
         // roll bleed
         float r = UnityEngine.Random.value;
-        Debug.Log($"[SwordWeapon] Normal bleed roll: rnd={r} vs chance={normalBleedChance}");
+        Debug.Log($"[SwordWeapon] Normal bleed roll: rnd={{r}} vs chance={{normalBleedChance}}");
         if (r <= normalBleedChance)
         {
             ApplyBleed(target);
@@ -54,11 +54,11 @@ public class SwordWeapon : MonoBehaviour
         foreach (var t in targets)
         {
             if (t == null) continue;
-            Debug.Log($"[SwordWeapon] SkillAttack -> target={t.name}, baseDamage={baseDamage}");
+            Debug.Log($"[SwordWeapon] SkillAttack -> target={{t.name}}, baseDamage={{baseDamage}}");
             DealDamageToTarget(t, baseDamage);
 
             float r = UnityEngine.Random.value;
-            Debug.Log($"[SwordWeapon] Skill bleed roll for {t.name}: rnd={r} vs chance={skillBleedChance}");
+            Debug.Log($"[SwordWeapon] Skill bleed roll for {{t.name}}: rnd={{r}} vs chance={{skillBleedChance}}");
             if (r <= skillBleedChance)
             {
                 ApplyBleed(t);
@@ -74,7 +74,7 @@ public class SwordWeapon : MonoBehaviour
             return;
         }
 
-        Debug.Log($"[SwordWeapon] ApplyBleed called on {target.name} (dur={bleedDurationTurns}, dmgPerTurn={bleedDamagePerTurn})");
+        Debug.Log($"[SwordWeapon] ApplyBleed called on {{target.name}} (dur={{bleedDurationTurns}}, dmgPerTurn={{bleedDamagePerTurn}})");
 
         // Create BleedEffect instance (constructor from your StatusEffect implementation)
         var bleed = new BleedEffect(bleedDurationTurns, bleedDamagePerTurn);
@@ -100,11 +100,11 @@ public class SwordWeapon : MonoBehaviour
                 try
                 {
                     smComp = target.AddComponent(smType);
-                    Debug.Log($"[SwordWeapon] Added StatusManager ({smType.FullName}) to {target.name} via reflection.");
+                    Debug.Log($"[SwordWeapon] Added StatusManager ({{smType.FullName}}) to {{target.name}} via reflection.");
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[SwordWeapon] Failed to add StatusManager via reflection: {ex.Message}");
+                    Debug.LogWarning($"[SwordWeapon] Failed to add StatusManager via reflection: {{ex.Message}}");
                 }
             }
         }
@@ -121,7 +121,7 @@ public class SwordWeapon : MonoBehaviour
                 try
                 {
                     applyMethod.Invoke(smComp, new object[] { bleed });
-                    Debug.Log($"[SwordWeapon] Applied Bleed to {target.name} via {smComp.GetType().Name}.");
+                    Debug.Log($"[SwordWeapon] Applied Bleed to {{target.name}} via {{smComp.GetType().Name}}.");
                     // Notify UI integration to show bleeding icon (if available)
                     try
                     {
@@ -137,21 +137,21 @@ public class SwordWeapon : MonoBehaviour
                             var sprite = BleedingIntegrationExample.bleedingSprite ?? Resources.Load<Sprite>("StatusIcons/bleeding");
                             HealthBarManager.Instance?.AddStatusIconFor(target, "bleeding", sprite, "Bleeding");
                         }
-                        Debug.Log($"[SwordWeapon] Requested bleeding icon for {target.name}");
+                        Debug.Log($"[SwordWeapon] Requested bleeding icon for {{target.name}}");
                     }
                     catch (Exception ex)
                     {
-                        Debug.LogWarning($"[SwordWeapon] Failed to request bleeding icon: {ex}");
+                        Debug.LogWarning($"[SwordWeapon] Failed to request bleeding icon: {{ex}}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[SwordWeapon] Failed to invoke ApplyStatus on {smComp.GetType().Name}: {ex}");
+                    Debug.LogWarning($"[SwordWeapon] Failed to invoke ApplyStatus on {{smComp.GetType().Name}}: {{ex}}");
                 }
             }
             else
             {
-                Debug.LogWarning($"[SwordWeapon] StatusManager found ({smComp.GetType().FullName}) but no suitable ApplyStatus method was found.");
+                Debug.LogWarning($"[SwordWeapon] StatusManager found ({{smComp.GetType().FullName}}) but no suitable ApplyStatus method was found.");
             }
         }
         else
@@ -168,7 +168,7 @@ public class SwordWeapon : MonoBehaviour
         if (damageable != null)
         {
             damageable.TakeDamage(dmg);
-            Debug.Log($"[SwordWeapon] IDamageable.TakeDamage({dmg}) on {target.name}");
+            Debug.Log($"[SwordWeapon] IDamageable.TakeDamage({{dmg}}) on {{target.name}}");
             return;
         }
 
@@ -178,8 +178,8 @@ public class SwordWeapon : MonoBehaviour
             var meth = ps.GetType().GetMethod("TakeDamage", new Type[] { typeof(int) });
             if (meth != null)
             {
-                try { meth.Invoke(ps, new object[] { dmg }); Debug.Log($"[SwordWeapon] PlayerStat.TakeDamage invoked on {target.name}"); return; }
-                catch { Debug.LogWarning($"[SwordWeapon] PlayerStat.TakeDamage invoked but failed on {target.name}."); }
+                try { meth.Invoke(ps, new object[] { dmg }); Debug.Log($"[SwordWeapon] PlayerStat.TakeDamage invoked on {{target.name}}"); return; }
+                catch { Debug.LogWarning($"[SwordWeapon] PlayerStat.TakeDamage invoked but failed on {{target.name}}."); }
             }
 
             var hpField = ps.GetType().GetField("hp");
@@ -190,7 +190,7 @@ public class SwordWeapon : MonoBehaviour
                     int hpVal = (int)hpField.GetValue(ps);
                     hpVal = Mathf.Max(0, hpVal - dmg);
                     hpField.SetValue(ps, hpVal);
-                    Debug.Log($"[SwordWeapon] (fallback) Subtracted {dmg} hp from {target.name} (hp now {hpVal})");
+                    Debug.Log($"[SwordWeapon] (fallback) Subtracted {{dmg}} hp from {{target.name}} (hp now {{hpVal}})");
                     return;
                 }
                 catch { }
@@ -204,13 +204,13 @@ public class SwordWeapon : MonoBehaviour
                     int hpVal = (int)hpProp.GetValue(ps);
                     hpVal = Mathf.Max(0, hpVal - dmg);
                     hpProp.SetValue(ps, hpVal);
-                    Debug.Log($"[SwordWeapon] (fallback) Subtracted {dmg} hp from {target.name} (hp now {hpVal})");
+                    Debug.Log($"[SwordWeapon] (fallback) Subtracted {{dmg}} hp from {{target.name}} (hp now {{hpVal}})");
                     return;
                 }
                 catch { }
             }
 
-            Debug.LogWarning($"[SwordWeapon] Could not apply damage to PlayerStat on {target.name}.");
+            Debug.LogWarning($"[SwordWeapon] Could not apply damage to PlayerStat on {{target.name}}.");
             return;
         }
 
@@ -223,7 +223,7 @@ public class SwordWeapon : MonoBehaviour
                 if (method != null)
                 {
                     method.Invoke(ms, new object[] { dmg });
-                    Debug.Log($"[SwordWeapon] IMonsterStat.TakeDamage({dmg}) on {target.name}");
+                    Debug.Log($"[SwordWeapon] IMonsterStat.TakeDamage({{dmg}}) on {{target.name}}");
                     return;
                 }
             }
@@ -237,12 +237,12 @@ public class SwordWeapon : MonoBehaviour
             if (idx >= 0 && idx < TurnManager.Instance.battlers.Count)
             {
                 TurnManager.Instance.battlers[idx].hp = Mathf.Max(0, TurnManager.Instance.battlers[idx].hp - dmg);
-                Debug.Log($"[SwordWeapon] Reduced battler {TurnManager.Instance.battlers[idx].name} hp by {dmg}. New hp={TurnManager.Instance.battlers[idx].hp}");
+                Debug.Log($"[SwordWeapon] Reduced battler {{TurnManager.Instance.battlers[idx].name}} hp by {{dmg}}. New hp={{TurnManager.Instance.battlers[idx].hp}}");
                 return;
             }
         }
 
-        Debug.LogWarning($"[SwordWeapon] No known damage path found for {target.name}");
+        Debug.LogWarning($"[SwordWeapon] No known damage path found for {{target.name}});
     }
 
     // -------------------------------------------------------
