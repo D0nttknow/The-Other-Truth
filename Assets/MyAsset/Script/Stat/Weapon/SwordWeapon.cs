@@ -1,18 +1,18 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using GameRaiwaa.Stat; // ถ้า BleedEffect/Status อยู่ที่นี่
+using GameRaiwaa.Stat; // เธ–เนเธฒ BleedEffect/Status เธญเธขเธนเนเธ—เธตเนเธเธตเน
 
 /// <summary>
-/// SwordWeapon: โค้ดตัวอย่างสำหรับการทำ damage + มีโอกาสทำให้ติด Bleed
-/// - ใส่ Debug.Log เพื่อช่วยดีบัก flow
-/// - พยายามใช้ reflection ในการเรียก StatusManager.ApplyStatus หาก type/ชื่อไม่ตรงกัน
-/// - เรียก BleedingIntegrationExample.OnBleedingApplied / HealthBarManager เพื่อแสดงไอคอนบน healthbar
+/// SwordWeapon: เนเธเนเธ”เธ•เธฑเธงเธญเธขเนเธฒเธเธชเธณเธซเธฃเธฑเธเธเธฒเธฃเธ—เธณ damage + เธกเธตเนเธญเธเธฒเธชเธ—เธณเนเธซเนเธ•เธดเธ” Bleed
+/// - เนเธชเน Debug.Log เน€เธเธทเนเธญเธเนเธงเธขเธ”เธตเธเธฑเธ flow
+/// - เธเธขเธฒเธขเธฒเธกเนเธเน reflection เนเธเธเธฒเธฃเน€เธฃเธตเธขเธ StatusManager.ApplyStatus เธซเธฒเธ type/เธเธทเนเธญเนเธกเนเธ•เธฃเธเธเธฑเธ
+/// - เน€เธฃเธตเธขเธ BleedingIntegrationExample.OnBleedingApplied / HealthBarManager เน€เธเธทเนเธญเนเธชเธ”เธเนเธญเธเธญเธเธเธ healthbar
 /// 
-/// วิธีใช้:
-/// - วางไฟล์นี้ใน Assets/.../Script/... (เช่น Assets/MyAsset/Script/Stat/Weapon/SwordWeapon.cs)
-/// - แน่ใจว่า BleedEffect, StatusManager, HealthBarManager, BleedingIntegrationExample อยู่ในโปรเจค
-/// - เชื่อมค่า WeaponItem ผ่าน ApplyWeaponData เมื่อ equip หรือ instantiate prefab
+/// เธงเธดเธเธตเนเธเน:
+/// - เธงเธฒเธเนเธเธฅเนเธเธตเนเนเธ Assets/.../Script/... (เน€เธเนเธ Assets/MyAsset/Script/Stat/Weapon/SwordWeapon.cs)
+/// - เนเธเนเนเธเธงเนเธฒ BleedEffect, StatusManager, HealthBarManager, BleedingIntegrationExample เธญเธขเธนเนเนเธเนเธเธฃเน€เธเธ
+/// - เน€เธเธทเนเธญเธกเธเนเธฒ WeaponItem เธเนเธฒเธ ApplyWeaponData เน€เธกเธทเนเธญ equip เธซเธฃเธทเธญ instantiate prefab
 /// </summary>
 public class SwordWeapon : MonoBehaviour
 {

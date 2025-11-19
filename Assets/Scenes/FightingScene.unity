@@ -554,6 +554,7 @@ GameObject:
   - component: {fileID: 226837741}
   - component: {fileID: 226837742}
   - component: {fileID: 226837743}
+  - component: {fileID: 226837744}
   m_Layer: 0
   m_Name: Hunter
   m_TagString: Untagged
@@ -763,6 +764,19 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerSelectable
   useMouseClick: 1
   onlyIfPlayer: 1
+--- !u!114 &226837744
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 226837734}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ad90af7ca5ec22f4cb6d92f8bbf9685f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StatusManager
+  effects: []
 --- !u!1 &229592940
 GameObject:
   m_ObjectHideFlags: 0
@@ -1010,6 +1024,53 @@ RectTransform:
   m_AnchoredPosition: {x: 400, y: -75}
   m_SizeDelta: {x: 400, y: 180}
   m_Pivot: {x: 0, y: 1}
+--- !u!1 &517396510
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 517396512}
+  - component: {fileID: 517396511}
+  m_Layer: 0
+  m_Name: GameObject (1)
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &517396511
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 517396510}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f6cf537a6c8a5ab42810a0abfdc2ff1b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ApplyBleedTester
+  target: {fileID: 0}
+  duration: 2
+  dmgPerTurn: 2
+--- !u!4 &517396512
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 517396510}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -94.71616, y: 237.03366, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -1536,6 +1597,7 @@ GameObject:
   - component: {fileID: 804065249}
   - component: {fileID: 804065251}
   - component: {fileID: 804065252}
+  - component: {fileID: 804065253}
   m_Layer: 0
   m_Name: Enemie 1
   m_TagString: MainCamera
@@ -1731,6 +1793,19 @@ MonoBehaviour:
   faceCamera: 1
   uiSmoothing: 8
   createManagerUI: 1
+--- !u!114 &804065253
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 804065243}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ad90af7ca5ec22f4cb6d92f8bbf9685f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StatusManager
+  effects: []
 --- !u!1 &808002133
 GameObject:
   m_ObjectHideFlags: 0
@@ -2260,6 +2335,7 @@ GameObject:
   - component: {fileID: 904972514}
   - component: {fileID: 904972513}
   - component: {fileID: 904972517}
+  - component: {fileID: 904972518}
   m_Layer: 0
   m_Name: Mokou(Enemie)
   m_TagString: Untagged
@@ -2455,6 +2531,19 @@ MonoBehaviour:
   headTransform: {fileID: 0}
   offset: {x: 0, y: 1.6, z: 0}
   forceCreateEvenIfManagerExists: 0
+--- !u!114 &904972518
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 904972510}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ad90af7ca5ec22f4cb6d92f8bbf9685f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StatusManager
+  effects: []
 --- !u!1 &925734507
 GameObject:
   m_ObjectHideFlags: 0
@@ -4034,6 +4123,7 @@ GameObject:
   - component: {fileID: 1373171030}
   - component: {fileID: 1373171031}
   - component: {fileID: 1373171032}
+  - component: {fileID: 1373171033}
   m_Layer: 0
   m_Name: Main Cahracter
   m_TagString: Untagged
@@ -4260,6 +4350,19 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e268fc27086c93a42903bb2a0e901abb, type: 2}
   - {fileID: 11400000, guid: 0c465912008933848995b966a210abbe, type: 2}
   currentWeaponItem: {fileID: 11400000, guid: e268fc27086c93a42903bb2a0e901abb, type: 2}
+--- !u!114 &1373171033
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1373171021}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ad90af7ca5ec22f4cb6d92f8bbf9685f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StatusManager
+  effects: []
 --- !u!1 &1374982070
 GameObject:
   m_ObjectHideFlags: 0
@@ -5426,6 +5529,7 @@ GameObject:
   - component: {fileID: 1792964417}
   - component: {fileID: 1792964419}
   - component: {fileID: 1792964420}
+  - component: {fileID: 1792964421}
   m_Layer: 0
   m_Name: Enemie 2
   m_TagString: MainCamera
@@ -5621,6 +5725,19 @@ MonoBehaviour:
   faceCamera: 1
   uiSmoothing: 8
   createManagerUI: 1
+--- !u!114 &1792964421
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1792964411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ad90af7ca5ec22f4cb6d92f8bbf9685f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::StatusManager
+  effects: []
 --- !u!1 &1795397621
 GameObject:
   m_ObjectHideFlags: 0
@@ -6718,3 +6835,4 @@ SceneRoots:
   - {fileID: 1225577596}
   - {fileID: 827161128}
   - {fileID: 76577946}
+  - {fileID: 517396512}
