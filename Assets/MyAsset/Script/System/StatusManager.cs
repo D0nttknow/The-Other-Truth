@@ -8,11 +8,7 @@ using GameRaiwaa.Stat; // ใช้ StatusEffect / StatusType จาก namespac
 /// - เข้ากันได้กับ StatusEffect (มี legacy fields และ modern properties)
 /// - ให้ API: ApplyStatus, HasStatus, RemoveStatus, TickStatusPerTurn / OnTurnStart
 /// - เพิ่ม overload ApplyStatus(object) เพื่อรองรับการเรียกด้วย reflection จากโค้ดเก่า
-<<<<<<< HEAD
-/// - เพิ่ม helper AddBleed(...) เพื่อเรียกใช้ง่ายจากสคริปต์อื่น ๆ
-=======
 /// - เพิ่ม helper AddBleed(...) เพื่อเรียกใช้ง่ายจากโค้ดอื่น ๆ
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
 /// - เมื่อ Bleed ถูกเพิ่ม/ลบ จะพยายามเรียก BleedingIntegrationExample.OnBleedingApplied/OnBleedingRemoved
 /// </summary>
 [DisallowMultipleComponent]
@@ -46,11 +42,7 @@ public class StatusManager : MonoBehaviour
                 {
                     e.RemainingTurns = newEffect.RemainingTurns;
                     try { e.remainingTurns = newEffect.remainingTurns; } catch { }
-<<<<<<< HEAD
                     Debug.Log($"[StatusManager] Refreshed {newEffect.Type} on {gameObject.name} to {newEffect.RemainingTurns} turns.");
-=======
-                    Debug.Log($"[StatusManager] Refreshed {{newEffect.Type}} on {{gameObject.name}} to {{newEffect.RemainingTurns}} turns.");
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
                     // If it's bleed, re-notify UI to refresh icon (best-effort)
                     if (e is BleedEffect)
                     {
@@ -59,11 +51,7 @@ public class StatusManager : MonoBehaviour
                 }
                 else
                 {
-<<<<<<< HEAD
                     Debug.Log($"[StatusManager] {newEffect.Type} already present on {gameObject.name} - not stacking.");
-=======
-                    Debug.Log($"[StatusManager] {{newEffect.Type}} already present on {{gameObject.name}} - not stacking.");
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
                 }
                 return;
             }
@@ -85,11 +73,7 @@ public class StatusManager : MonoBehaviour
         }
 
         effects.Add(toAdd);
-<<<<<<< HEAD
         Debug.Log($"[StatusManager] Applied {toAdd.Type} to {gameObject.name} for {toAdd.RemainingTurns} turns.");
-=======
-        Debug.Log($"[StatusManager] Applied {{toAdd.Type}} to {{gameObject.name}} for {{toAdd.RemainingTurns}} turns.");
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
 
         // Notify UI if this is Bleed
         if (toAdd is BleedEffect)
@@ -190,11 +174,7 @@ public class StatusManager : MonoBehaviour
             }
             catch (Exception ex)
             {
-<<<<<<< HEAD
                 Debug.LogWarning($"[StatusManager] Exception while ticking {eff.Type} on {gameObject.name}: {ex.Message}");
-=======
-                Debug.LogWarning($"[StatusManager] Exception while ticking {{eff.Type}} on {{gameObject.name}}: {{ex.Message}});
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
             }
 
             if (dmg > 0)
@@ -220,11 +200,7 @@ public class StatusManager : MonoBehaviour
                             if (method != null)
                             {
                                 try { method.Invoke(ps, new object[] { dmg }); }
-<<<<<<< HEAD
                                 catch { Debug.LogWarning($"[StatusManager] Failed to call PlayerStat.TakeDamage on {gameObject.name}"); }
-=======
-                                catch { Debug.LogWarning($"[StatusManager] Failed to call PlayerStat.TakeDamage on {{gameObject.name}}"); }
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
                             }
                             else
                             {
@@ -245,11 +221,7 @@ public class StatusManager : MonoBehaviour
                     }
                 }
 
-<<<<<<< HEAD
                 Debug.Log($"[StatusManager] {gameObject.name} took {dmg} damage from {eff.Type}");
-=======
-                Debug.Log($"[StatusManager] {{gameObject.name}} took {{dmg}} damage from {{eff.Type}});
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
             }
 
             // decrease duration
@@ -270,11 +242,7 @@ public class StatusManager : MonoBehaviour
             {
                 if (r != null && r.Type == StatusType.Bleed) bleedExpired = true;
                 effects.Remove(r);
-<<<<<<< HEAD
                 Debug.Log($"[StatusManager] {r?.Type} expired on {gameObject.name}");
-=======
-                Debug.Log($"[StatusManager] {{r?.Type}} expired on {{gameObject.name}}");
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
             }
 
             if (bleedExpired)
@@ -302,11 +270,7 @@ public class StatusManager : MonoBehaviour
         }
         catch (Exception ex)
         {
-<<<<<<< HEAD
             Debug.LogWarning($"[StatusManager] TryNotifyBleedingApplied failed: {ex.Message}");
-=======
-            Debug.LogWarning($"[StatusManager] TryNotifyBleedingApplied failed: {{ex.Message}});
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
         }
     }
 
@@ -325,11 +289,7 @@ public class StatusManager : MonoBehaviour
         }
         catch (Exception ex)
         {
-<<<<<<< HEAD
             Debug.LogWarning($"[StatusManager] TryNotifyBleedingRemoved failed: {ex.Message}");
-=======
-            Debug.LogWarning($"[StatusManager] TryNotifyBleedingRemoved failed: {{ex.Message}});
->>>>>>> ab37c862ce0eca174caf29dab8e7ec4894947786
         }
     }
 }
