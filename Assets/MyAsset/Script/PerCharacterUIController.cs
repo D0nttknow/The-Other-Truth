@@ -314,12 +314,59 @@ public class PerCharacterUIController : MonoBehaviour
 
         // Try to get selected monster; fallback to pointer raycast to recover from selection-clearing listeners.
         var target = GetSelectedOrPointerMonster(tm);
-        if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer"); _localActionInProgress = false; return; }
+        if (target == null)
+        {
+            Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer");
+            _localActionInProgress = false;
+            return;
+        }
 
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
 
-        // Tell TurnManager that player action begins (block EndTurn while action in progress)
-        TryBeginPlayerActionOnTurnManager(tm);
+        // Track whether we successfully requested the Turn system to begin a player action.
+        bool beganAction = false;
+
+        // Helper cleanup used by all exit paths (safe to call multiple times)
+        Action CleanupAndFinish = () =>
+        {
+            try
+            {
+                if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+            }
+            catch { }
+
+            try
+            {
+                var tbs = TurnBaseSystem.Instance;
+                if (tbs != null) tbs.selectedMonster = null;
+            }
+            catch { }
+
+            // If we flagged action begin, tell the turn manager that player returned so it can clear flags and EndTurn
+            if (beganAction)
+            {
+                try { tm.OnPlayerReturned(); }
+                catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw during cleanup: " + ex); try { tm.EndTurn(); } catch { } }
+            }
+
+            SetAllButtonsInteractable(true);
+            _localActionInProgress = false;
+        };
+
+        // Try to inform TurnBaseSystem that a player action is starting (blocks EndTurn).
+        try
+        {
+            // Prefer public API BeginPlayerAction if available
+            tm.BeginPlayerAction();
+            beganAction = true;
+            Debug.Log("[PerCharacterUI] Called tm.BeginPlayerAction()");
+        }
+        catch (Exception ex)
+        {
+            // If BeginPlayerAction is not present or throws, log and continue,
+            // we will rely on existing TurnBaseSystem.OnPlayerReturned calls in callbacks.
+            Debug.LogWarning("[PerCharacterUI] tm.BeginPlayerAction() failed or not present: " + ex);
+        }
 
         // disable buttons immediately and start recovery timer
         SetAllButtonsInteractable(false);
@@ -330,23 +377,85 @@ public class PerCharacterUIController : MonoBehaviour
         {
             Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name + " target=" + target.name);
 
-            // AttackMonster should call this callback at the hit-frame
-            goAI.AttackMonster(target, () =>
+            try
             {
-                Debug.Log("[PerCharacterUI] Attack hit callback - applying damage via CharacterEquipment");
+                // AttackMonster should call this callback at the hit-frame
+                goAI.AttackMonster(target, () =>
+                {
+                    try
+                    {
+                        Debug.Log("[PerCharacterUI] Attack hit callback - applying damage via CharacterEquipment");
 
-                // Apply damage; when damage application completes it should call onComplete
+                        // Apply damage; when damage application completes it should call onComplete
+                        playerEquipment.DoNormalAttack(target, () =>
+                        {
+                            try
+                            {
+                                Debug.Log("[PerCharacterUI] Damage applied callback - returning to start");
+
+                                // Return to start, then notify TurnBaseSystem by calling OnPlayerReturned (so TurnBaseSystem manages EndTurn)
+                                goAI.ReturnToStart(() =>
+                                {
+                                    try
+                                    {
+                                        Debug.Log("[PerCharacterUI] ReturnToStart complete - notifying TurnBaseSystem.OnPlayerReturned");
+                                        if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+
+                                        // Clear selection and notify Turn manager
+                                        try
+                                        {
+                                            var tbs = TurnBaseSystem.Instance;
+                                            if (tbs != null) tbs.selectedMonster = null;
+                                        }
+                                        catch { }
+
+                                        try { tm.OnPlayerReturned(); }
+                                        catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+
+                                        SetAllButtonsInteractable(true);
+                                    }
+                                    catch (Exception exInner)
+                                    {
+                                        Debug.LogWarning("[PerCharacterUI] Exception in ReturnToStart callback: " + exInner);
+                                        CleanupAndFinish();
+                                    }
+                                    finally
+                                    {
+                                        _localActionInProgress = false;
+                                    }
+                                });
+                            }
+                            catch (Exception exDo)
+                            {
+                                Debug.LogWarning("[PerCharacterUI] Exception during DoNormalAttack callback: " + exDo);
+                                CleanupAndFinish();
+                            }
+                        });
+                    }
+                    catch (Exception exHit)
+                    {
+                        Debug.LogWarning("[PerCharacterUI] Exception in attack-hit callback: " + exHit);
+                        CleanupAndFinish();
+                    }
+                });
+            }
+            catch (Exception exAttack)
+            {
+                Debug.LogWarning("[PerCharacterUI] Exception when calling goAI.AttackMonster: " + exAttack);
+                CleanupAndFinish();
+            }
+        }
+        else
+        {
+            // fallback: no movement AI — call damage then notify TurnBaseSystem
+            try
+            {
                 playerEquipment.DoNormalAttack(target, () =>
                 {
-                    Debug.Log("[PerCharacterUI] Damage applied callback - returning to start");
-
-                    // Return to start, then notify TurnBaseSystem by calling OnPlayerReturned (so TurnBaseSystem manages EndTurn)
-                    goAI.ReturnToStart(() =>
+                    try
                     {
-                        Debug.Log("[PerCharacterUI] ReturnToStart complete - notifying TurnBaseSystem.OnPlayerReturned");
                         if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
 
-                        // Ensure we clear the selection in TurnBaseSystem (so future panels don't reuse it accidentally)
                         try
                         {
                             var tbs = TurnBaseSystem.Instance;
@@ -354,36 +463,27 @@ public class PerCharacterUIController : MonoBehaviour
                         }
                         catch { }
 
-                        // Use OnPlayerReturned so TurnBaseSystem can clear any in-progress flags and call EndTurn.
                         try { tm.OnPlayerReturned(); }
                         catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
 
                         SetAllButtonsInteractable(true);
+                    }
+                    catch (Exception exCB)
+                    {
+                        Debug.LogWarning("[PerCharacterUI] Exception in DoNormalAttack fallback callback: " + exCB);
+                        CleanupAndFinish();
+                    }
+                    finally
+                    {
                         _localActionInProgress = false;
-                    });
+                    }
                 });
-            });
-        }
-        else
-        {
-            // fallback: no movement AI — call damage then notify TurnBaseSystem
-            playerEquipment.DoNormalAttack(target, () =>
+            }
+            catch (Exception exDo)
             {
-                if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
-
-                try
-                {
-                    var tbs = TurnBaseSystem.Instance;
-                    if (tbs != null) tbs.selectedMonster = null;
-                }
-                catch { }
-
-                try { tm.OnPlayerReturned(); }
-                catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
-
-                SetAllButtonsInteractable(true);
-                _localActionInProgress = false;
-            });
+                Debug.LogWarning("[PerCharacterUI] Exception when calling DoNormalAttack fallback: " + exDo);
+                CleanupAndFinish();
+            }
         }
     }
 

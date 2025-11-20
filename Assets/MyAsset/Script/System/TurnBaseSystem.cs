@@ -86,7 +86,12 @@ public class TurnBaseSystem : MonoBehaviour
     // When true we are waiting for player's movement/skill/return sequence to finish.
     // This prevents EndTurn/StartTurn from advancing while an in-progress action has not completed.
     private bool _playerActionInProgress = false;
-
+    public void BeginPlayerAction()
+    {
+        // set guard and debug log for easier tracing
+        _playerActionInProgress = true;
+        Debug.Log("[TurnBaseSystem] BeginPlayerAction() - blocking EndTurn until OnPlayerReturned");
+    }
     public GameObject CurrentBattlerObject
     {
         get
@@ -309,8 +314,8 @@ public class TurnBaseSystem : MonoBehaviour
         {
             ShowPanelsForParticipants(playerObj, monsterObj);
 
-            // Mark action in progress until ReturnToStart -> OnPlayerReturned
-            _playerActionInProgress = true;
+            // Mark action in progress via public API so callers don't use reflection or set private fields directly.
+            BeginPlayerAction();
 
             // Pass the monsterObj as parameter and clear selection in callback after attack+return finishes
             playerAI.StrongAttackMonster(monsterObj, () =>
