@@ -73,6 +73,10 @@ public class TurnBaseSystem : MonoBehaviour
     // internal coroutine handles
     private Coroutine _delayedHealthbarCoroutine = null;
 
+    // --- Selection debounce / dedupe helpers (prevent duplicate selection events) ---
+    private float _lastSelectTime = -10f;
+    private const float _selectDebounceSeconds = 0.12f;
+
     public GameObject CurrentBattlerObject
     {
         get
@@ -261,19 +265,52 @@ public class TurnBaseSystem : MonoBehaviour
 
     public void OnPlayerStrongAttack()
     {
-        if (selectedMonster == null) return;
-        if (turnIndex < 0 || turnIndex >= battlerObjects.Count) return;
+        Debug.Log("[TurnBaseSystem] OnPlayerStrongAttack called");
+
+        if (selectedMonster == null)
+        {
+            Debug.Log("[TurnBaseSystem] selectedMonster is null");
+            return;
+        }
+
+        if (turnIndex < 0 || turnIndex >= battlerObjects.Count)
+        {
+            Debug.Log($"[TurnBaseSystem] invalid turnIndex {turnIndex} / battlerObjects.Count {battlerObjects.Count}");
+            return;
+        }
 
         GameObject playerObj = battlerObjects[turnIndex];
+
+        // Build safe info strings to avoid embedded-quote escaping issues
+        string playerInfo = playerObj != null ? $"{playerObj.name} id={playerObj.GetInstanceID()}" : "null";
+        Debug.Log($"[TurnBaseSystem] Current playerObj = {playerInfo}");
+
         if (playerObj == null) return;
 
         GoAttck playerAI = playerObj.GetComponent<GoAttck>();
+        Debug.Log($"[TurnBaseSystem] playerObj has GoAttck? {playerAI != null}");
+
         GameObject monsterObj = selectedMonster;
+        string targetInfo = monsterObj != null ? $"{monsterObj.name} id={monsterObj.GetInstanceID()}" : "null";
+        Debug.Log($"[TurnBaseSystem] selectedMonster = {targetInfo}");
+
         if (playerAI != null && monsterObj != null)
         {
             ShowPanelsForParticipants(playerObj, monsterObj);
-            playerAI.StrongAttackMonster(monsterObj, () => playerAI.ReturnToStart(OnPlayerReturned));
-            selectedMonster = null;
+
+            // Pass the monsterObj as parameter and clear selection in callback after attack+return finishes
+            playerAI.StrongAttackMonster(monsterObj, () =>
+            {
+                // clear selection only after the attack flow completes
+                selectedMonster = null;
+                // ensure player returns and TurnBaseSystem is notified when return completes
+                playerAI.ReturnToStart(OnPlayerReturned);
+            });
+        }
+        else
+        {
+            if (playerAI == null) Debug.LogWarning("[TurnBaseSystem] Cannot perform StrongAttack: GoAttck component missing on playerObj");
+            if (monsterObj == null) Debug.LogWarning("[TurnBaseSystem] Cannot perform StrongAttack: selectedMonster is null");
         }
     }
 
@@ -437,8 +474,26 @@ public class TurnBaseSystem : MonoBehaviour
         EndTurn();
     }
 
+    // Updated: make selection idempotent and debounce rapid duplicate events
     public void OnMonsterSelected(GameObject monster)
     {
+        // if same monster already selected, do nothing
+        if (selectedMonster == monster)
+        {
+            Debug.Log("[TurnBaseSystem] Selected Monster (already): " + (monster != null ? monster.name : "null"));
+            return;
+        }
+
+        // debounce very rapid repeated selection events (e.g. OnMouseDown + pointer event fired together)
+        if (Time.realtimeSinceStartup - _lastSelectTime < _selectDebounceSeconds)
+        {
+            Debug.Log("[TurnBaseSystem] Selection ignored (debounced): " + (monster != null ? monster.name : "null"));
+            // update timestamp to avoid a train of repeated logs
+            _lastSelectTime = Time.realtimeSinceStartup;
+            return;
+        }
+
+        _lastSelectTime = Time.realtimeSinceStartup;
         selectedMonster = monster;
         Debug.Log("[TurnBaseSystem] Selected Monster: " + (monster != null ? monster.name : "null"));
     }
