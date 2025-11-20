@@ -15,6 +15,9 @@ using UnityEngine.UI;
 /// - Provide a small CacheComponents() helper and call it from RefreshAll so the component is robust when
 ///   TurnBaseSystem assigns playerEquipment after this component's Start.
 /// - Slightly reduce per-frame allocation by avoiding repeated reflection calls when not needed.
+/// - Improved skill flow: prefer selectedMonster + GoAttck movement path to avoid "random target" behavior.
+/// - Prevent re-entry by local action lock to avoid double-activations.
+/// - Fallback: if TurnBaseSystem.selectedMonster==null (e.g. UI listener cleared it), try to find the clicked monster under the mouse pointer.
 /// </summary>
 [DisallowMultipleComponent]
 public class PerCharacterUIController : MonoBehaviour
@@ -44,13 +47,27 @@ public class PerCharacterUIController : MonoBehaviour
     // cached components to avoid repeated GetComponent calls
     private PlayerStat _playerStat = null;
 
+    // NEW: local action lock to prevent double activation from this panel
+    private bool _localActionInProgress = false;
+
     void Start()
     {
         if (turnManager == null) turnManager = TurnBaseSystem.Instance;
 
-        if (normalButton != null) normalButton.onClick.AddListener(OnNormalClicked);
-        if (skillButton != null) skillButton.onClick.AddListener(OnSkillClicked);
-        if (swapButton != null) swapButton.onClick.AddListener(OnSwapClicked);
+        // Defensive: remove any persistent listeners (from Prefab/Inspector) and bind instance listeners only.
+        // This ensures the button will call this panel's handlers rather than an inspector-bound MainCharacter handler.
+        if (normalButton != null) {
+            normalButton.onClick.RemoveAllListeners();
+            normalButton.onClick.AddListener(OnNormalClicked);
+        }
+        if (skillButton != null) {
+            skillButton.onClick.RemoveAllListeners();
+            skillButton.onClick.AddListener(OnSkillClicked);
+        }
+        if (swapButton != null) {
+            swapButton.onClick.RemoveAllListeners();
+            swapButton.onClick.AddListener(OnSwapClicked);
+        }
 
         CacheComponents();
         RefreshAll();
@@ -156,13 +173,82 @@ public class PerCharacterUIController : MonoBehaviour
         bool isActiveTurn = (tm != null && playerEquipment != null && tm.IsCurrentTurn(playerEquipment.gameObject)
                              && tm.state == TurnBaseSystem.BattleState.WaitingForPlayerInput);
 
-        if (normalButton != null) normalButton.interactable = isActiveTurn;
+        if (normalButton != null) normalButton.interactable = isActiveTurn && !_localActionInProgress;
         if (skillButton != null)
         {
             var wc = playerEquipment != null ? playerEquipment.GetEquippedWeapon() : null;
-            skillButton.interactable = isActiveTurn && wc != null && wc.IsSkillReady();
+            skillButton.interactable = isActiveTurn && wc != null && wc.IsSkillReady() && !_localActionInProgress;
         }
-        if (swapButton != null) swapButton.interactable = isActiveTurn;
+        if (swapButton != null) swapButton.interactable = isActiveTurn && !_localActionInProgress;
+    }
+
+    // Helper: try to get selected monster, but if null attempt to find a monster under the current pointer
+    GameObject GetSelectedOrPointerMonster(TurnBaseSystem tm)
+    {
+        if (tm != null && tm.selectedMonster != null) return tm.selectedMonster;
+
+        // Fallback: try TurnManager if assigned and different
+        try
+        {
+            if (turnManager != null && turnManager != tm)
+            {
+                // use reflection in case TurnManager type differs
+                var field = turnManager.GetType().GetField("selectedMonster");
+                if (field != null)
+                {
+                    var val = field.GetValue(turnManager) as GameObject;
+                    if (val != null) return val;
+                }
+            }
+        }
+        catch { }
+
+        // Raycast from pointer position to find a monster under cursor
+        var cam = Camera.main;
+        if (cam == null) return null;
+
+        Vector3 screenPos = Input.mousePosition;
+        Vector3 worldPos = cam.ScreenToWorldPoint(screenPos);
+
+        // Try 2D overlap first
+        try
+        {
+            var hits2d = Physics2D.OverlapPointAll(new Vector2(worldPos.x, worldPos.y));
+            foreach (var c in hits2d)
+            {
+                if (c == null) continue;
+                var go = c.gameObject;
+                if (go.GetComponent<IMonsterStat>() != null || go.CompareTag("Enemy") || go.CompareTag("Monster")) return go;
+            }
+        }
+        catch { }
+
+        // Try 2D ray
+        try
+        {
+            var ray2 = Physics2D.RaycastAll(new Vector2(worldPos.x, worldPos.y), Vector2.zero);
+            foreach (var r in ray2)
+            {
+                if (r.collider == null) continue;
+                var go = r.collider.gameObject;
+                if (go.GetComponent<IMonsterStat>() != null || go.CompareTag("Enemy") || go.CompareTag("Monster")) return go;
+            }
+        }
+        catch { }
+
+        // Try 3D raycast
+        try
+        {
+            Ray ray = cam.ScreenPointToRay(screenPos);
+            if (Physics.Raycast(ray, out RaycastHit hit, 100f))
+            {
+                var go = hit.collider.gameObject;
+                if (go.GetComponent<IMonsterStat>() != null || go.CompareTag("Enemy") || go.CompareTag("Monster")) return go;
+            }
+        }
+        catch { }
+
+        return null;
     }
 
     public void OnNormalClicked()
@@ -171,8 +257,20 @@ public class PerCharacterUIController : MonoBehaviour
         var tm = turnManager ?? TurnBaseSystem.Instance;
         if (tm == null || playerEquipment == null) return;
 
-        var target = tm.selectedMonster;
-        if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected"); return; }
+        // Defensive: ensure this panel belongs to current battler (should already be ensured by CanAct)
+        if (tm.CurrentBattlerObject != playerEquipment.gameObject)
+        {
+            Debug.LogWarning("[PerCharacterUI] OnNormalClicked but this panel is not CurrentBattlerObject. Ignoring. panel=" + playerEquipment.gameObject.name + " current=" + (tm.CurrentBattlerObject != null ? tm.CurrentBattlerObject.name : "null"));
+            return;
+        }
+
+        // Prevent re-entry
+        if (_localActionInProgress) { Debug.Log("[PerCharacterUI] OnNormalClicked ignored because local action in progress"); return; }
+        _localActionInProgress = true;
+
+        // Try to get selected monster; fallback to pointer raycast to recover from selection-clearing listeners.
+        var target = GetSelectedOrPointerMonster(tm);
+        if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer"); _localActionInProgress = false; return; }
 
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
 
@@ -183,7 +281,7 @@ public class PerCharacterUIController : MonoBehaviour
 
         if (goAI != null)
         {
-            Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name);
+            Debug.Log("[PerCharacterUI] OnNormalClicked start player=" + playerEquipment.gameObject.name + " target=" + target.name);
 
             // AttackMonster should call this callback at the hit-frame
             goAI.AttackMonster(target, () =>
@@ -195,25 +293,49 @@ public class PerCharacterUIController : MonoBehaviour
                 {
                     Debug.Log("[PerCharacterUI] Damage applied callback - returning to start");
 
-                    // Return to start, then end turn once
+                    // Return to start, then notify TurnBaseSystem by calling OnPlayerReturned (so TurnBaseSystem manages EndTurn)
                     goAI.ReturnToStart(() =>
                     {
-                        Debug.Log("[PerCharacterUI] ReturnToStart complete - ending turn");
+                        Debug.Log("[PerCharacterUI] ReturnToStart complete - notifying TurnBaseSystem.OnPlayerReturned");
                         if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
-                        if (tm != null) tm.EndTurn();
+
+                        // Ensure we clear the selection in TurnBaseSystem (so future panels don't reuse it accidentally)
+                        try
+                        {
+                            var tbs = TurnBaseSystem.Instance;
+                            if (tbs != null) tbs.selectedMonster = null;
+                        }
+                        catch { }
+
+                        // Use OnPlayerReturned so TurnBaseSystem can clear any in-progress flags and call EndTurn.
+                        try { tm.OnPlayerReturned(); }
+                        catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+
                         SetAllButtonsInteractable(true);
+                        _localActionInProgress = false;
                     });
                 });
             });
         }
         else
         {
-            // fallback: no movement AI — call damage then EndTurn
+            // fallback: no movement AI — call damage then notify TurnBaseSystem
             playerEquipment.DoNormalAttack(target, () =>
             {
                 if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
-                if (tm != null) tm.EndTurn();
+
+                try
+                {
+                    var tbs = TurnBaseSystem.Instance;
+                    if (tbs != null) tbs.selectedMonster = null;
+                }
+                catch { }
+
+                try { tm.OnPlayerReturned(); }
+                catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+
                 SetAllButtonsInteractable(true);
+                _localActionInProgress = false;
             });
         }
     }
@@ -224,26 +346,206 @@ public class PerCharacterUIController : MonoBehaviour
         var tm = turnManager ?? TurnBaseSystem.Instance;
         if (tm == null || playerEquipment == null) return;
 
-        var targets = new List<GameObject>();
-        for (int i = 0; i < tm.battlerObjects.Count && i < tm.battlers.Count; i++)
+        // Defensive: ensure this panel belongs to current battler (avoid acting on wrong panel)
+        if (tm.CurrentBattlerObject != playerEquipment.gameObject)
         {
-            var go = tm.battlerObjects[i];
-            var b = tm.battlers[i];
-            if (go != null && b != null && b.isMonster && b.hp > 0) targets.Add(go);
+            Debug.LogWarning("[PerCharacterUI] OnSkillClicked but this panel is not CurrentBattlerObject. Ignoring. panel=" + playerEquipment.gameObject.name + " current=" + (tm.CurrentBattlerObject != null ? tm.CurrentBattlerObject.name : "null"));
+            return;
         }
-        if (targets.Count == 0) { Debug.LogWarning("[PerCharacterUI] No valid skill targets"); return; }
+
+        // Prevent re-entry
+        if (_localActionInProgress) { Debug.Log("[PerCharacterUI] OnSkillClicked ignored because local action in progress"); return; }
+        _localActionInProgress = true;
+
+        // prefer selectedMonster if player explicitly selected a target (fallback to pointer)
+        var selected = GetSelectedOrPointerMonster(tm);
 
         SetAllButtonsInteractable(false);
         if (_recoveryCoroutine != null) StopCoroutine(_recoveryCoroutine);
         _recoveryCoroutine = StartCoroutine(RecoveryEnableAfterTimeout(recoveryTimeoutSeconds));
 
-        // UseSkill will invoke onComplete when done (our CharacterEquipment.UseSkill supports callback)
-        playerEquipment.UseSkill(targets, () =>
+        var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
+
+        // If player clicked on a specific monster and we have movement AI, move to that selected target first
+        if (selected != null && goAI != null)
         {
+            Debug.Log("[PerCharacterUI] SkillClicked: will StrongAttackMonster to selected target: " + selected.name);
+
+            try
+            {
+                goAI.StrongAttackMonster(selected, () =>
+                {
+                    // After movement/attack animation, call UseSkill and wait for completion via callback if available
+                    try
+                    {
+                        var ceType = playerEquipment.GetType();
+                        var useWithCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>), typeof(Action) });
+                        var targets = new List<GameObject> { selected };
+
+                        if (useWithCb != null)
+                        {
+                            useWithCb.Invoke(playerEquipment, new object[] { targets, new Action(() =>
+                            {
+                                // when UseSkill finished, return then notify TurnBaseSystem
+                                try
+                                {
+                                    goAI.ReturnToStart(() =>
+                                    {
+                                        if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+
+                                        try
+                                        {
+                                            var tbs = TurnBaseSystem.Instance;
+                                            if (tbs != null) tbs.selectedMonster = null;
+                                        }
+                                        catch { }
+
+                                        try { tm.OnPlayerReturned(); } catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+                                        SetAllButtonsInteractable(true);
+                                        _localActionInProgress = false;
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogWarning("[PerCharacterUI] Exception returning after skill callback: " + ex);
+                                    if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                                    try { tm.OnPlayerReturned(); } catch (Exception ex2) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex2); tm.EndTurn(); }
+                                    SetAllButtonsInteractable(true);
+                                    _localActionInProgress = false;
+                                }
+                            })});
+                        }
+                        else
+                        {
+                            // fallback: synchronous UseSkill then return+notify
+                            playerEquipment.UseSkill(targets);
+                            try
+                            {
+                                goAI.ReturnToStart(() =>
+                                {
+                                    if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+
+                                    try
+                                    {
+                                        var tbs = TurnBaseSystem.Instance;
+                                        if (tbs != null) tbs.selectedMonster = null;
+                                    }
+                                    catch { }
+
+                                    try { tm.OnPlayerReturned(); } catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+                                    SetAllButtonsInteractable(true);
+                                    _localActionInProgress = false;
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning("[PerCharacterUI] Exception during fallback skill return: " + ex);
+                                if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                                try { tm.OnPlayerReturned(); } catch (Exception ex2) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex2); tm.EndTurn(); }
+                                SetAllButtonsInteractable(true);
+                                _localActionInProgress = false;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning("[PerCharacterUI] Exception while invoking UseSkill after StrongAttack: " + ex);
+                        // ensure cleanup
+                        try { goAI.ReturnToStart(() => { try { tm.OnPlayerReturned(); } catch { tm.EndTurn(); } SetAllButtonsInteractable(true); _localActionInProgress = false; }); }
+                        catch { try { tm.OnPlayerReturned(); } catch { tm.EndTurn(); } SetAllButtonsInteractable(true); _localActionInProgress = false; }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[PerCharacterUI] Exception while calling StrongAttackMonster: " + ex);
+                // fallback to direct UseSkill
+                try
+                {
+                    var ceType = playerEquipment.GetType();
+                    var useWithCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>), typeof(Action) });
+                    var targets = new List<GameObject> { selected };
+                    if (useWithCb != null)
+                    {
+                        useWithCb.Invoke(playerEquipment, new object[] { targets, new Action(() =>
+                        {
+                            if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                            try { tm.OnPlayerReturned(); } catch (Exception ex2) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex2); tm.EndTurn(); }
+                            SetAllButtonsInteractable(true);
+                            _localActionInProgress = false;
+                        })});
+                    }
+                    else
+                    {
+                        playerEquipment.UseSkill(new List<GameObject> { selected });
+                        if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                        try { tm.OnPlayerReturned(); } catch (Exception ex2) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex2); tm.EndTurn(); }
+                        SetAllButtonsInteractable(true);
+                        _localActionInProgress = false;
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    Debug.LogWarning("[PerCharacterUI] Fallback UseSkill failed: " + ex2);
+                    if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                    try { tm.OnPlayerReturned(); } catch { tm.EndTurn(); }
+                    SetAllButtonsInteractable(true);
+                    _localActionInProgress = false;
+                }
+            }
+
+            return;
+        }
+
+        // If no selected target or no movement AI, fallback to area-use on all monsters (original behaviour),
+        // but prefer UseSkill overload with callback so we end turn only after completion.
+        var targetsAll = new List<GameObject>();
+        for (int i = 0; i < tm.battlerObjects.Count && i < tm.battlers.Count; i++)
+        {
+            var go = tm.battlerObjects[i];
+            var b = tm.battlers[i];
+            if (go != null && b != null && b.isMonster && b.hp > 0) targetsAll.Add(go);
+        }
+        if (targetsAll.Count == 0)
+        {
+            Debug.LogWarning("[PerCharacterUI] No valid skill targets (fallback).");
             if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
-            if (tm != null) tm.EndTurn();
             SetAllButtonsInteractable(true);
-        });
+            _localActionInProgress = false;
+            return;
+        }
+
+        try
+        {
+            var ceType2 = playerEquipment.GetType();
+            var useWithCb2 = ceType2.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>), typeof(Action) });
+            if (useWithCb2 != null)
+            {
+                useWithCb2.Invoke(playerEquipment, new object[] { targetsAll, new Action(() =>
+                {
+                    if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                    try { tm.OnPlayerReturned(); } catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+                    SetAllButtonsInteractable(true);
+                    _localActionInProgress = false;
+                })});
+            }
+            else
+            {
+                playerEquipment.UseSkill(targetsAll);
+                if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+                try { tm.OnPlayerReturned(); } catch (Exception ex) { Debug.LogWarning("[PerCharacterUI] tm.OnPlayerReturned threw: " + ex); tm.EndTurn(); }
+                SetAllButtonsInteractable(true);
+                _localActionInProgress = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerCharacterUI] UseSkill threw (fallback all-targets): " + ex);
+            if (_recoveryCoroutine != null) { StopCoroutine(_recoveryCoroutine); _recoveryCoroutine = null; }
+            try { tm.OnPlayerReturned(); } catch { tm.EndTurn(); }
+            SetAllButtonsInteractable(true);
+            _localActionInProgress = false;
+        }
     }
 
     public void OnSwapClicked()

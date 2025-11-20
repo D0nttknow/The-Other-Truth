@@ -77,6 +77,16 @@ public class TurnBaseSystem : MonoBehaviour
     private float _lastSelectTime = -10f;
     private const float _selectDebounceSeconds = 0.12f;
 
+    // EndTurn debounce / lock
+    private float _lastEndTurnTime = -10f;
+    private const float _endTurnDebounceSeconds = 0.12f;
+    private bool _endTurnLock = false;
+
+    // --- NEW: player action guard ---
+    // When true we are waiting for player's movement/skill/return sequence to finish.
+    // This prevents EndTurn/StartTurn from advancing while an in-progress action has not completed.
+    private bool _playerActionInProgress = false;
+
     public GameObject CurrentBattlerObject
     {
         get
@@ -263,6 +273,7 @@ public class TurnBaseSystem : MonoBehaviour
         catch { return fallback; }
     }
 
+    // ---------------- Player strong attack flow ----------------
     public void OnPlayerStrongAttack()
     {
         Debug.Log("[TurnBaseSystem] OnPlayerStrongAttack called");
@@ -298,9 +309,13 @@ public class TurnBaseSystem : MonoBehaviour
         {
             ShowPanelsForParticipants(playerObj, monsterObj);
 
+            // Mark action in progress until ReturnToStart -> OnPlayerReturned
+            _playerActionInProgress = true;
+
             // Pass the monsterObj as parameter and clear selection in callback after attack+return finishes
             playerAI.StrongAttackMonster(monsterObj, () =>
             {
+                bool returnedHandled = false;
                 try
                 {
                     var ce = playerObj.GetComponent<CharacterEquipment>();
@@ -319,16 +334,19 @@ public class TurnBaseSystem : MonoBehaviour
                             useWithCb.Invoke(ce, new object[] { targets, new Action(() =>
                             {
                                 selectedMonster = null;
-                                playerAI.ReturnToStart(OnPlayerReturned);
+                                playerAI.ReturnToStart(() =>
+                                {
+                                    OnPlayerReturned();
+                                });
                             })});
-                            return; // async path taken
+                            returnedHandled = true;
                         }
-
-                        // fallback: UseSkill(List<GameObject>)
-                        var useNoCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>) });
-                        if (useNoCb != null)
+                        else
                         {
-                            useNoCb.Invoke(ce, new object[] { targets });
+                            // fallback: UseSkill(List<GameObject>)
+                            useWithCb = null;
+                            try { ce.UseSkill(new List<GameObject> { monsterObj }); }
+                            catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] CharacterEquipment.UseSkill (fallback) threw: " + ex); }
                         }
                     }
                     else if (playerStat != null)
@@ -337,14 +355,7 @@ public class TurnBaseSystem : MonoBehaviour
                         if (ms != null)
                         {
                             Debug.Log("[TurnBaseSystem] Applying skill via ICharacterStat.StrongAttackMonster for " + playerObj.name);
-                            try
-                            {
-                                var statType = playerStat.GetType();
-                                var m = statType.GetMethod("StrongAttackMonster", new Type[] { typeof(IMonsterStat) });
-                                if (m != null) m.Invoke(playerStat, new object[] { ms });
-                                else playerStat.StrongAttackMonster(ms);
-                            }
-                            catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] playerStat.StrongAttackMonster threw: " + ex); }
+                            try { playerStat.StrongAttackMonster(ms); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] playerStat.StrongAttackMonster threw: " + ex); }
                         }
                         else Debug.LogWarning("[TurnBaseSystem] Monster has no IMonsterStat - cannot call StrongAttackMonster on playerStat");
                     }
@@ -358,9 +369,24 @@ public class TurnBaseSystem : MonoBehaviour
                     Debug.LogWarning("[TurnBaseSystem] Exception while applying skill in OnPlayerStrongAttack callback: " + ex);
                 }
 
-                // Default synchronous path: clear selection and return to start
-                selectedMonster = null;
-                playerAI.ReturnToStart(OnPlayerReturned);
+                // Default synchronous path: if no async branch handled return, clear selection and ReturnToStart -> OnPlayerReturned
+                if (!returnedHandled)
+                {
+                    selectedMonster = null;
+                    try
+                    {
+                        playerAI.ReturnToStart(() =>
+                        {
+                            OnPlayerReturned();
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning("[TurnBaseSystem] Exception while returning to start in fallback: " + ex);
+                        _playerActionInProgress = false;
+                        EndTurn();
+                    }
+                }
             });
         }
         else
@@ -500,12 +526,15 @@ public class TurnBaseSystem : MonoBehaviour
 
     void OnMonsterAttackFinished() => EndTurn();
 
-    private float _lastEndTurnTime = -10f;
-    private const float _endTurnDebounceSeconds = 0.12f;
-    private bool _endTurnLock = false;
-
+    // If a player action is in progress we block EndTurn from advancing (defensive).
     public void EndTurn()
     {
+        if (_playerActionInProgress)
+        {
+            Debug.LogWarning("[TurnBaseSystem] EndTurn called while player action in progress - ignoring until action completes.");
+            return;
+        }
+
         if (Time.realtimeSinceStartup - _lastEndTurnTime < _endTurnDebounceSeconds) { Debug.LogWarning("[TurnBaseSystem] Ignored duplicate EndTurn() call (debounced)."); return; }
         if (_endTurnLock) { Debug.LogWarning("[TurnBaseSystem] Ignored EndTurn() call because EndTurn is already processing."); return; }
         _endTurnLock = true;
@@ -527,6 +556,11 @@ public class TurnBaseSystem : MonoBehaviour
     // Called when a player's movement/ReturnToStart finishes in previous flow
     public void OnPlayerReturned()
     {
+        Debug.Log("[TurnBaseSystem] OnPlayerReturned called (playerActionInProgress=" + _playerActionInProgress + ")");
+        // clear flag first
+        _playerActionInProgress = false;
+
+        // now end the turn (EndTurn has guard to ignore duplicate/overlapping calls)
         EndTurn();
     }
 
@@ -741,7 +775,7 @@ public class TurnBaseSystem : MonoBehaviour
             if (go == null) continue;
 
             var panel = Instantiate(perCharacterPanelPrefab, parent, false);
-            panel.name = "PerCharacterPanel_" + i + "_" + go.name + "_" + go.GetInstanceID();
+            panel.name = $"PerCharacterPanel_{i}_{go.name}_{go.GetInstanceID()}";
 
             var ui = panel.GetComponent<PerCharacterUIController>();
             if (ui != null)
@@ -752,7 +786,7 @@ public class TurnBaseSystem : MonoBehaviour
             }
 
             battlerToPanel[go] = panel;
-            Debug.Log("[TurnBaseSystem] Created per-character panel: index=" + i + ", go=" + go.name + ", id=" + go.GetInstanceID() + ", panel=" + panel.name);
+            Debug.Log($"[TurnBaseSystem] Created per-character panel: index={i}, go={go.name}, id={go.GetInstanceID()}, panel={panel.name}");
         }
     }
 
@@ -813,7 +847,7 @@ public class TurnBaseSystem : MonoBehaviour
         bool hasPlayer = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && !x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
         bool hasMonster = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
         Debug.Log("CheckGameEnd: hasPlayer=" + hasPlayer + ", hasMonster=" + hasMonster + ", battler count=" + battlers.Count);
-        if (!hasPlayer) { Debug.Log("Game Over! All players are dead."); if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowGameOver("Game Over"); } else { HideAllPlayerUI(); } return; }
+        if (!hasPlayer) { Debug.Log("Game Over! All players are dead."); if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowGameOver("Game Over"); } else HideAllPlayerUI(); return; }
         if (!hasMonster)
         {
             Debug.Log("Victory! All monsters are dead.");
