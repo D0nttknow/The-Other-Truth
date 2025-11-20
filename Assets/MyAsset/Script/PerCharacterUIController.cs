@@ -1,15 +1,17 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.EventSystems;
 
 /// <summary>
 /// Per-character action panel controller (updated):
 /// - Use callbacks from CharacterEquipment so EndTurn is called only after animation/processing finishes.
 /// - Skill now waits for UseSkill onComplete callback before calling EndTurn.
 /// - Adds a small recovery timeout to avoid UI stuck if callbacks never arrive (debug only).
-/// 
+///
 /// Minor improvements added:
 /// - Cache PlayerStat reference when possible to avoid repeated GetComponent calls every frame.
 /// - Provide a small CacheComponents() helper and call it from RefreshAll so the component is robust when
@@ -56,15 +58,18 @@ public class PerCharacterUIController : MonoBehaviour
 
         // Defensive: remove any persistent listeners (from Prefab/Inspector) and bind instance listeners only.
         // This ensures the button will call this panel's handlers rather than an inspector-bound MainCharacter handler.
-        if (normalButton != null) {
+        if (normalButton != null)
+        {
             normalButton.onClick.RemoveAllListeners();
             normalButton.onClick.AddListener(OnNormalClicked);
         }
-        if (skillButton != null) {
+        if (skillButton != null)
+        {
             skillButton.onClick.RemoveAllListeners();
             skillButton.onClick.AddListener(OnSkillClicked);
         }
-        if (swapButton != null) {
+        if (swapButton != null)
+        {
             swapButton.onClick.RemoveAllListeners();
             swapButton.onClick.AddListener(OnSwapClicked);
         }
@@ -203,6 +208,16 @@ public class PerCharacterUIController : MonoBehaviour
         }
         catch { }
 
+        // If pointer is over UI, avoid using pointer fallback (prevents catching world objects under UI)
+        try
+        {
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            {
+                return null;
+            }
+        }
+        catch { }
+
         // Raycast from pointer position to find a monster under cursor
         var cam = Camera.main;
         if (cam == null) return null;
@@ -251,6 +266,35 @@ public class PerCharacterUIController : MonoBehaviour
         return null;
     }
 
+    // Try to set player's action-in-progress on the Turn manager so EndTurn is blocked until OnPlayerReturned
+    void TryBeginPlayerActionOnTurnManager(TurnBaseSystem tm)
+    {
+        if (tm == null) return;
+        try
+        {
+            // try method BeginPlayerAction()
+            var m = tm.GetType().GetMethod("BeginPlayerAction", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (m != null)
+            {
+                m.Invoke(tm, null);
+                Debug.Log("[PerCharacterUI] Invoked TurnManager.BeginPlayerAction()");
+                return;
+            }
+
+            // fallback: try set private field _playerActionInProgress = true
+            var f = tm.GetType().GetField("_playerActionInProgress", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (f != null)
+            {
+                f.SetValue(tm, true);
+                Debug.Log("[PerCharacterUI] Set TurnManager._playerActionInProgress = true (via reflection)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerCharacterUI] Failed to set playerActionInProgress on TurnManager via reflection: " + ex);
+        }
+    }
+
     public void OnNormalClicked()
     {
         if (!CanAct()) return;
@@ -273,6 +317,9 @@ public class PerCharacterUIController : MonoBehaviour
         if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer"); _localActionInProgress = false; return; }
 
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
+
+        // Tell TurnManager that player action begins (block EndTurn while action in progress)
+        TryBeginPlayerActionOnTurnManager(tm);
 
         // disable buttons immediately and start recovery timer
         SetAllButtonsInteractable(false);
@@ -359,6 +406,9 @@ public class PerCharacterUIController : MonoBehaviour
 
         // prefer selectedMonster if player explicitly selected a target (fallback to pointer)
         var selected = GetSelectedOrPointerMonster(tm);
+
+        // Tell TurnManager that player action begins (block EndTurn while action in progress)
+        TryBeginPlayerActionOnTurnManager(tm);
 
         SetAllButtonsInteractable(false);
         if (_recoveryCoroutine != null) StopCoroutine(_recoveryCoroutine);
