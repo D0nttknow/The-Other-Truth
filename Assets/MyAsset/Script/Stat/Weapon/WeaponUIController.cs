@@ -12,6 +12,7 @@ using UnityEngine.UI;
 /// - ถ้ามี GoAttck component จะเรียก AttackMonster(...) เพื่อให้ตัวละครเดินไปตีก่อนค่อยทำดาเมจและ EndTurn
 /// - เพิ่ม fallback: หาก panel.playerEquipment ไม่ตรงกับ TurnManager.CurrentBattlerObject
 ///   จะใช้ CharacterEquipment ของ CurrentBattlerObject แทน (ลดปัญหาการสั่ง actor ผิดคน)
+/// - รองรับทั้ง TurnManager (turnManager) และ TurnBaseSystem (compatibility) ในการเช็ค state / EndTurn
 /// </summary>
 public class WeaponUIController : MonoBehaviour
 {
@@ -42,6 +43,7 @@ public class WeaponUIController : MonoBehaviour
 
     void Start()
     {
+        // prefer explicit TurnManager set in inspector, otherwise try to get singleton instance
         if (turnManager == null) turnManager = TurnManager.Instance;
 
         if (normalButton != null) normalButton.onClick.AddListener(OnNormalButtonClicked);
@@ -151,16 +153,23 @@ public class WeaponUIController : MonoBehaviour
     // Prefer the TurnManager.CurrentBattlerObject's CharacterEquipment if it's available and different from this panel's playerEquipment.
     CharacterEquipment ResolveActiveCharacterEquipment()
     {
-        // If no turn manager, just return the panel's equipment
-        if (turnManager == null)
-        {
-            return playerEquipment;
-        }
+        // Try TurnManager first (explicit)
+        GameObject current = null;
+        if (turnManager != null)
+            current = turnManager.CurrentBattlerObject;
 
-        var current = turnManager.CurrentBattlerObject;
+        // If no TurnManager or no current from it, try TurnBaseSystem fallback
         if (current == null)
         {
-            // no current battler, return panel's equipment
+            var tbs = TurnBaseSystem.Instance;
+            if (tbs != null) current = tbs.CurrentBattlerObject;
+        }
+
+        // If still null, just return panel equipment
+        if (current == null)
+        {
+            if (playerEquipment == null)
+                Debug.Log("[WeaponUIController] No current battler and panel.playerEquipment is null.");
             return playerEquipment;
         }
 
@@ -191,6 +200,25 @@ public class WeaponUIController : MonoBehaviour
         return playerEquipment;
     }
 
+    // Helper: call EndTurn on whichever manager is present
+    void EndTurnViaManager()
+    {
+        if (turnManager != null)
+        {
+            try { turnManager.EndTurn(); return; }
+            catch (Exception ex) { Debug.LogWarning("[WeaponUIController] turnManager.EndTurn threw: " + ex.Message); }
+        }
+
+        var tbs = TurnBaseSystem.Instance;
+        if (tbs != null)
+        {
+            try { tbs.EndTurn(); return; }
+            catch (Exception ex) { Debug.LogWarning("[WeaponUIController] TurnBaseSystem.EndTurn threw: " + ex.Message); }
+        }
+
+        Debug.LogWarning("[WeaponUIController] No turn manager available to EndTurn.");
+    }
+
     // -------------------------
     // Button handlers (public for OnClick)
     // -------------------------
@@ -198,7 +226,7 @@ public class WeaponUIController : MonoBehaviour
     {
         if (!CanAct()) return;
 
-        var target = (turnManager != null) ? turnManager.selectedMonster : null;
+        var target = GetCurrentSelectedMonster();
         if (target == null) { Debug.LogWarning("[WeaponUIController] No target selected for Normal Attack."); return; }
 
         var equip = ResolveActiveCharacterEquipment();
@@ -217,12 +245,13 @@ public class WeaponUIController : MonoBehaviour
             goAI.AttackMonster(target, () =>
             {
                 // apply damage now (if AttackMonster doesn't already apply it)
-                equip.DoNormalAttack(target);
+                try { equip.DoNormalAttack(target); }
+                catch (Exception ex) { Debug.LogWarning("[WeaponUIController] DoNormalAttack threw: " + ex.Message); }
 
                 // return to start and when returned, end turn
                 goAI.ReturnToStart(() =>
                 {
-                    if (turnManager != null) turnManager.EndTurn();
+                    EndTurnViaManager();
                     SetButtonsInteractable(true);
                 });
             });
@@ -231,7 +260,7 @@ public class WeaponUIController : MonoBehaviour
         {
             // fallback: instant attack then end turn
             equip.DoNormalAttack(target);
-            if (turnManager != null) turnManager.EndTurn();
+            EndTurnViaManager();
         }
     }
 
@@ -244,6 +273,7 @@ public class WeaponUIController : MonoBehaviour
 
         // build target list (all alive monsters)
         var targets = new List<GameObject>();
+        // prefer TurnManager list but fall back to TurnBaseSystem
         if (turnManager != null)
         {
             for (int i = 0; i < turnManager.battlerObjects.Count && i < turnManager.battlers.Count; i++)
@@ -251,6 +281,19 @@ public class WeaponUIController : MonoBehaviour
                 var go = turnManager.battlerObjects[i];
                 var b = turnManager.battlers[i];
                 if (go != null && b != null && b.isMonster && b.hp > 0) targets.Add(go);
+            }
+        }
+        else
+        {
+            var tbs = TurnBaseSystem.Instance;
+            if (tbs != null)
+            {
+                for (int i = 0; i < tbs.battlerObjects.Count && i < tbs.battlers.Count; i++)
+                {
+                    var go = tbs.battlerObjects[i];
+                    var b = tbs.battlers[i];
+                    if (go != null && b != null && b.isMonster && b.hp > 0) targets.Add(go);
+                }
             }
         }
 
@@ -273,7 +316,8 @@ public class WeaponUIController : MonoBehaviour
                     mi.Invoke(goAI, new object[] { targets[0], new Action(() =>
                     {
                         // apply skill logic (area damage / status) via resolved equipment
-                        equip.UseSkill(targets);
+                        try { equip.UseSkill(targets); }
+                        catch (Exception ex) { Debug.LogWarning("[WeaponUIController] UseSkill threw: " + ex.Message); }
 
                         // return to start then end turn (if method exists)
                         var retMethod = goAI.GetType().GetMethod("ReturnToStart", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -281,13 +325,13 @@ public class WeaponUIController : MonoBehaviour
                         {
                             retMethod.Invoke(goAI, new object[] { new Action(() =>
                             {
-                                if (turnManager != null) turnManager.EndTurn();
+                                EndTurnViaManager();
                                 SetButtonsInteractable(true);
                             })});
                         }
                         else
                         {
-                            if (turnManager != null) turnManager.EndTurn();
+                            EndTurnViaManager();
                             SetButtonsInteractable(true);
                         }
                     })});
@@ -301,13 +345,13 @@ public class WeaponUIController : MonoBehaviour
 
             // Fallback: no StrongAttack method or reflection failed -> just play skill without movement
             equip.UseSkill(targets);
-            if (turnManager != null) turnManager.EndTurn();
+            EndTurnViaManager();
             SetButtonsInteractable(true);
         }
         else
         {
             equip.UseSkill(targets);
-            if (turnManager != null) turnManager.EndTurn();
+            EndTurnViaManager();
         }
     }
 
@@ -323,8 +367,26 @@ public class WeaponUIController : MonoBehaviour
     // Helpers
     bool CanAct()
     {
-        if (turnManager == null) return true;
-        return turnManager.state == TurnManager.BattleState.WaitingForPlayerInput;
+        // If explicit TurnManager available, prefer it
+        if (turnManager != null)
+            return turnManager.state == TurnManager.BattleState.WaitingForPlayerInput;
+
+        // fallback to TurnBaseSystem if present
+        var tbs = TurnBaseSystem.Instance;
+        if (tbs != null)
+            return tbs.state == TurnBaseSystem.BattleState.WaitingForPlayerInput;
+
+        // unknown manager -> allow
+        return true;
+    }
+
+    // Helper to get selected monster also compatible with TurnBaseSystem
+    GameObject GetCurrentSelectedMonster()
+    {
+        if (turnManager != null) return turnManager.selectedMonster;
+        var tbs = TurnBaseSystem.Instance;
+        if (tbs != null) return tbs.selectedMonster;
+        return null;
     }
 
     void SetButtonsInteractable(bool value)

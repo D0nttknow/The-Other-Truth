@@ -251,7 +251,7 @@ public class TurnBaseSystem : MonoBehaviour
         {
             var goName = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].name : "null";
             var id = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].GetInstanceID().ToString() : "-";
-            Debug.Log($" index={i} battler={battlers[i].name} go={goName} id={id} speed={battlers[i].speed}");
+            Debug.Log(" index=" + i + " battler=" + battlers[i].name + " go=" + goName + " id=" + id + " speed=" + battlers[i].speed);
         }
 
         if (turnIndex < 0 || turnIndex >= battlers.Count) turnIndex = 0;
@@ -275,7 +275,7 @@ public class TurnBaseSystem : MonoBehaviour
 
         if (turnIndex < 0 || turnIndex >= battlerObjects.Count)
         {
-            Debug.Log($"[TurnBaseSystem] invalid turnIndex {turnIndex} / battlerObjects.Count {battlerObjects.Count}");
+            Debug.Log("[TurnBaseSystem] invalid turnIndex " + turnIndex + " / battlerObjects.Count " + battlerObjects.Count);
             return;
         }
 
@@ -301,9 +301,65 @@ public class TurnBaseSystem : MonoBehaviour
             // Pass the monsterObj as parameter and clear selection in callback after attack+return finishes
             playerAI.StrongAttackMonster(monsterObj, () =>
             {
-                // clear selection only after the attack flow completes
+                try
+                {
+                    var ce = playerObj.GetComponent<CharacterEquipment>();
+                    var playerStat = playerObj.GetComponent<ICharacterStat>();
+
+                    if (ce != null)
+                    {
+                        var targets = new List<GameObject> { monsterObj };
+                        Debug.Log("[TurnBaseSystem] Applying skill via CharacterEquipment.UseSkill for " + playerObj.name);
+
+                        // Try to call UseSkill with callback if available
+                        var ceType = ce.GetType();
+                        var useWithCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>), typeof(Action) });
+                        if (useWithCb != null)
+                        {
+                            useWithCb.Invoke(ce, new object[] { targets, new Action(() =>
+                            {
+                                selectedMonster = null;
+                                playerAI.ReturnToStart(OnPlayerReturned);
+                            })});
+                            return; // async path taken
+                        }
+
+                        // fallback: UseSkill(List<GameObject>)
+                        var useNoCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>) });
+                        if (useNoCb != null)
+                        {
+                            useNoCb.Invoke(ce, new object[] { targets });
+                        }
+                    }
+                    else if (playerStat != null)
+                    {
+                        var ms = monsterObj.GetComponent<IMonsterStat>();
+                        if (ms != null)
+                        {
+                            Debug.Log("[TurnBaseSystem] Applying skill via ICharacterStat.StrongAttackMonster for " + playerObj.name);
+                            try
+                            {
+                                var statType = playerStat.GetType();
+                                var m = statType.GetMethod("StrongAttackMonster", new Type[] { typeof(IMonsterStat) });
+                                if (m != null) m.Invoke(playerStat, new object[] { ms });
+                                else playerStat.StrongAttackMonster(ms);
+                            }
+                            catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] playerStat.StrongAttackMonster threw: " + ex); }
+                        }
+                        else Debug.LogWarning("[TurnBaseSystem] Monster has no IMonsterStat - cannot call StrongAttackMonster on playerStat");
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[TurnBaseSystem] No CharacterEquipment/ICharacterStat to apply skill from " + playerObj.name);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[TurnBaseSystem] Exception while applying skill in OnPlayerStrongAttack callback: " + ex);
+                }
+
+                // Default synchronous path: clear selection and return to start
                 selectedMonster = null;
-                // ensure player returns and TurnBaseSystem is notified when return completes
                 playerAI.ReturnToStart(OnPlayerReturned);
             });
         }
@@ -685,7 +741,7 @@ public class TurnBaseSystem : MonoBehaviour
             if (go == null) continue;
 
             var panel = Instantiate(perCharacterPanelPrefab, parent, false);
-            panel.name = $"PerCharacterPanel_{i}_{go.name}_{go.GetInstanceID()}";
+            panel.name = "PerCharacterPanel_" + i + "_" + go.name + "_" + go.GetInstanceID();
 
             var ui = panel.GetComponent<PerCharacterUIController>();
             if (ui != null)
@@ -696,7 +752,7 @@ public class TurnBaseSystem : MonoBehaviour
             }
 
             battlerToPanel[go] = panel;
-            Debug.Log($"[TurnBaseSystem] Created per-character panel: index={i}, go={go.name}, id={go.GetInstanceID()}, panel={panel.name}");
+            Debug.Log("[TurnBaseSystem] Created per-character panel: index=" + i + ", go=" + go.name + ", id=" + go.GetInstanceID() + ", panel=" + panel.name);
         }
     }
 
@@ -757,7 +813,7 @@ public class TurnBaseSystem : MonoBehaviour
         bool hasPlayer = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && !x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
         bool hasMonster = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
         Debug.Log("CheckGameEnd: hasPlayer=" + hasPlayer + ", hasMonster=" + hasMonster + ", battler count=" + battlers.Count);
-        if (!hasPlayer) { Debug.Log("Game Over! All players are dead."); if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowGameOver("Game Over"); } else HideAllPlayerUI(); return; }
+        if (!hasPlayer) { Debug.Log("Game Over! All players are dead."); if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowGameOver("Game Over"); } else { HideAllPlayerUI(); } return; }
         if (!hasMonster)
         {
             Debug.Log("Victory! All monsters are dead.");
