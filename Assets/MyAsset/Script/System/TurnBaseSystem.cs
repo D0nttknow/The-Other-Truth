@@ -282,17 +282,17 @@ public class TurnBaseSystem : MonoBehaviour
         GameObject playerObj = battlerObjects[turnIndex];
 
         // Build safe info strings to avoid embedded-quote escaping issues
-        string playerInfo = playerObj != null ? $"{playerObj.name} id={playerObj.GetInstanceID()}" : "null";
-        Debug.Log($"[TurnBaseSystem] Current playerObj = {playerInfo}");
+        string playerInfo = playerObj != null ? (playerObj.name + " id=" + playerObj.GetInstanceID()) : "null";
+        Debug.Log("[TurnBaseSystem] Current playerObj = " + playerInfo);
 
         if (playerObj == null) return;
 
         GoAttck playerAI = playerObj.GetComponent<GoAttck>();
-        Debug.Log($"[TurnBaseSystem] playerObj has GoAttck? {playerAI != null}");
+        Debug.Log("[TurnBaseSystem] playerObj has GoAttck? " + (playerAI != null));
 
         GameObject monsterObj = selectedMonster;
-        string targetInfo = monsterObj != null ? $"{monsterObj.name} id={monsterObj.GetInstanceID()}" : "null";
-        Debug.Log($"[TurnBaseSystem] selectedMonster = {targetInfo}");
+        string targetInfo = monsterObj != null ? (monsterObj.name + " id=" + monsterObj.GetInstanceID()) : "null";
+        Debug.Log("[TurnBaseSystem] selectedMonster = " + targetInfo);
 
         if (playerAI != null && monsterObj != null)
         {
@@ -384,12 +384,12 @@ public class TurnBaseSystem : MonoBehaviour
             // sanity check: if battler.name != GameObject.name, attempt to find correct GameObject by name
             if (!string.Equals(current.name, obj.name, StringComparison.Ordinal))
             {
-                Debug.LogWarning($"[TurnBaseSystem] Name mismatch at index {turnIndex}: battler='{current.name}' but battlerObjects[{turnIndex}]='{obj.name}'. Searching for matching GameObject.");
+                Debug.LogWarning("[TurnBaseSystem] Name mismatch at index " + turnIndex + ": battler='" + current.name + "' but battlerObjects[" + turnIndex + "]='" + obj.name + "'. Searching for matching GameObject.");
                 int foundIdx = battlerObjects.FindIndex(go => go != null && string.Equals(go.name, current.name, StringComparison.Ordinal));
                 if (foundIdx >= 0)
                 {
                     obj = battlerObjects[foundIdx];
-                    Debug.LogWarning($"[TurnBaseSystem] Remapped battler '{current.name}' -> battlerObjects[{foundIdx}] ('{obj.name}'). Updating turnIndex for consistency.");
+                    Debug.LogWarning("[TurnBaseSystem] Remapped battler '" + current.name + "' -> battlerObjects[" + foundIdx + "] ('" + obj.name + "'). Updating turnIndex for consistency.");
                     turnIndex = foundIdx;
                 }
             }
@@ -401,14 +401,14 @@ public class TurnBaseSystem : MonoBehaviour
             if (foundIdx >= 0)
             {
                 obj = battlerObjects[foundIdx];
-                Debug.LogWarning($"[TurnBaseSystem] Found battlerObjects[{foundIdx}] matching battler '{current.name}'. Using that GameObject and setting turnIndex={foundIdx}.");
+                Debug.LogWarning("[TurnBaseSystem] Found battlerObjects[" + foundIdx + "] matching battler '" + current.name + "'. Using that GameObject and setting turnIndex=" + foundIdx + ".");
                 turnIndex = foundIdx;
             }
             else
             {
                 // last-resort: use first available GameObject but warn (indicates lists are out of sync)
                 obj = battlerObjects.FirstOrDefault(go => go != null);
-                Debug.LogWarning($"[TurnBaseSystem] Could not find GameObject matching battler '{(current != null ? current.name : "null")}'. Falling back to first available GameObject '{(obj != null ? obj.name : "null")}'. This likely indicates lists are out of sync.");
+                Debug.LogWarning("[TurnBaseSystem] Could not find GameObject matching battler '" + (current != null ? current.name : "null") + "'. Falling back to first available GameObject '" + (obj != null ? obj.name : "null") + "'. This likely indicates lists are out of sync.");
             }
         }
         else
@@ -763,7 +763,17 @@ public class TurnBaseSystem : MonoBehaviour
             Debug.Log("Victory! All monsters are dead.");
             var rewards = new List<Reward>(); int totalExp = 0;
             if (defeatedRewards != null && defeatedRewards.Count > 0) { foreach (var r in defeatedRewards) { if (r == null) continue; rewards.Add(r); totalExp += r.exp; } }
-            else { foreach (var go in defeatedEnemies) { if (go == null) continue; var ms = go.GetComponent<IMonsterStat>(); if (ms != null) { var r = new Reward(ms.monsterName, 1, 0, ms.expValue); rewards.Add(r); totalExp += ms.expValue; } else { var r = new Reward(go.name, 1, 0, 0); rewards.Add(r); } } }
+            else
+            {
+                foreach (var go in defeatedEnemies)
+                {
+                    if (go == null) continue;
+                    var ms = go.GetComponent<IMonsterStat>();
+                    if (ms != null) { var r = new Reward(ms.monsterName, 1, 0, ms.expValue); rewards.Add(r); totalExp += ms.expValue; }
+                    else { var r = new Reward(go.name, 1, 0, 0); rewards.Add(r); }
+                }
+            }
+
             var alivePlayers = battlerObjects.Select((obj, idx) => new { obj, idx }).Where(x => x.obj != null && x.idx < battlers.Count && !battlers[x.idx].isMonster && battlers[x.idx].hp > 0).Select(x => x.obj).ToList();
             if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowVictory(rewards, totalExp, alivePlayers); }
             else { if (totalExp > 0 && alivePlayers.Count > 0) { AwardExpToPlayers(totalExp, alivePlayers); } if (rewards != null && rewards.Count > 0) { foreach (var r in rewards) Debug.Log("[TurnBaseSystem] (Fallback) Would award item '" + r.id + "' x" + r.quantity); } }
@@ -776,7 +786,18 @@ public class TurnBaseSystem : MonoBehaviour
         if (alivePlayers == null || alivePlayers.Count == 0 || totalExp <= 0) return;
         int perPlayer = totalExp / alivePlayers.Count;
         int remainder = totalExp % alivePlayers.Count;
-        for (int i = 0; i < alivePlayers.Count; i++) { var p = alivePlayers[i]; if (p == null) continue; var ps = p.GetComponent<PlayerStat>(); if (ps != null) { int grant = perPlayer + (i < remainder ? 1 : 0); ps.AddExp(grant); Debug.Log("[TurnBaseSystem] Awarded " + grant + " exp to " + p.name); } }
+        for (int i = 0; i < alivePlayers.Count; i++)
+        {
+            var p = alivePlayers[i];
+            if (p == null) continue;
+            var ps = p.GetComponent<PlayerStat>();
+            if (ps != null)
+            {
+                int grant = perPlayer + (i < remainder ? 1 : 0);
+                ps.AddExp(grant);
+                Debug.Log("[TurnBaseSystem] Awarded " + grant + " exp to " + p.name);
+            }
+        }
     }
 
     // UI helper stubs (implementations copied/kept from previous TurnManager if needed)

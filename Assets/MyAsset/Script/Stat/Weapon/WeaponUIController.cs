@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -9,6 +10,8 @@ using UnityEngine.UI;
 /// - เปลี่ยนไอคอนและสถานะปุ่มตามอาวุธที่ equip
 /// - เรียก DoNormalAttack / UseSkill / SwapToNextWeapon เมื่อกดปุ่ม
 /// - ถ้ามี GoAttck component จะเรียก AttackMonster(...) เพื่อให้ตัวละครเดินไปตีก่อนค่อยทำดาเมจและ EndTurn
+/// - เพิ่ม fallback: หาก panel.playerEquipment ไม่ตรงกับ TurnManager.CurrentBattlerObject
+///   จะใช้ CharacterEquipment ของ CurrentBattlerObject แทน (ลดปัญหาการสั่ง actor ผิดคน)
 /// </summary>
 public class WeaponUIController : MonoBehaviour
 {
@@ -144,6 +147,50 @@ public class WeaponUIController : MonoBehaviour
         }
     }
 
+    // Helper: resolve which CharacterEquipment to use for action.
+    // Prefer the TurnManager.CurrentBattlerObject's CharacterEquipment if it's available and different from this panel's playerEquipment.
+    CharacterEquipment ResolveActiveCharacterEquipment()
+    {
+        // If no turn manager, just return the panel's equipment
+        if (turnManager == null)
+        {
+            return playerEquipment;
+        }
+
+        var current = turnManager.CurrentBattlerObject;
+        if (current == null)
+        {
+            // no current battler, return panel's equipment
+            return playerEquipment;
+        }
+
+        // If panel's equipment is not set, use current battler's equipment
+        if (playerEquipment == null)
+        {
+            var fallback = current.GetComponent<CharacterEquipment>();
+            if (fallback != null)
+            {
+                Debug.Log("[WeaponUIController] panel playerEquipment is null; using CurrentBattlerObject's CharacterEquipment: " + fallback.gameObject.name);
+                return fallback;
+            }
+            return null;
+        }
+
+        // If panel is bound to a different GameObject than the current battler, prefer current battler's equipment
+        if (playerEquipment.gameObject != current)
+        {
+            var fallback = current.GetComponent<CharacterEquipment>();
+            if (fallback != null)
+            {
+                Debug.Log("[WeaponUIController] panel's CharacterEquipment (" + playerEquipment.gameObject.name + ") does not match CurrentBattlerObject (" + current.name + "). Using CurrentBattlerObject's CharacterEquipment (" + fallback.gameObject.name + ") for action.");
+                return fallback;
+            }
+        }
+
+        // otherwise return panel's equipment
+        return playerEquipment;
+    }
+
     // -------------------------
     // Button handlers (public for OnClick)
     // -------------------------
@@ -154,10 +201,11 @@ public class WeaponUIController : MonoBehaviour
         var target = (turnManager != null) ? turnManager.selectedMonster : null;
         if (target == null) { Debug.LogWarning("[WeaponUIController] No target selected for Normal Attack."); return; }
 
-        if (playerEquipment == null) { Debug.LogWarning("[WeaponUIController] playerEquipment not assigned."); return; }
+        var equip = ResolveActiveCharacterEquipment();
+        if (equip == null) { Debug.LogWarning("[WeaponUIController] No CharacterEquipment found for actor to perform Normal Attack."); return; }
 
         // Prefer using GoAttck to handle movement/animation before applying damage.
-        var playerGO = playerEquipment.gameObject;
+        var playerGO = equip.gameObject;
         var goAI = playerGO.GetComponent<GoAttck>();
         if (goAI != null)
         {
@@ -169,7 +217,7 @@ public class WeaponUIController : MonoBehaviour
             goAI.AttackMonster(target, () =>
             {
                 // apply damage now (if AttackMonster doesn't already apply it)
-                playerEquipment.DoNormalAttack(target);
+                equip.DoNormalAttack(target);
 
                 // return to start and when returned, end turn
                 goAI.ReturnToStart(() =>
@@ -182,7 +230,7 @@ public class WeaponUIController : MonoBehaviour
         else
         {
             // fallback: instant attack then end turn
-            playerEquipment.DoNormalAttack(target);
+            equip.DoNormalAttack(target);
             if (turnManager != null) turnManager.EndTurn();
         }
     }
@@ -190,7 +238,9 @@ public class WeaponUIController : MonoBehaviour
     public void OnSkillButtonClicked()
     {
         if (!CanAct()) return;
-        if (playerEquipment == null) { Debug.LogWarning("[WeaponUIController] playerEquipment not assigned."); return; }
+
+        var equip = ResolveActiveCharacterEquipment();
+        if (equip == null) { Debug.LogWarning("[WeaponUIController] playerEquipment not assigned and no fallback found."); return; }
 
         // build target list (all alive monsters)
         var targets = new List<GameObject>();
@@ -207,7 +257,7 @@ public class WeaponUIController : MonoBehaviour
         if (targets.Count == 0) { Debug.LogWarning("[WeaponUIController] No valid skill targets."); return; }
 
         // If player has GoAttck and you want animation for skill, try to use StrongAttackMonster if available;
-        var playerGO = playerEquipment.gameObject;
+        var playerGO = equip.gameObject;
         var goAI = playerGO.GetComponent<GoAttck>();
         if (goAI != null)
         {
@@ -222,8 +272,8 @@ public class WeaponUIController : MonoBehaviour
                 {
                     mi.Invoke(goAI, new object[] { targets[0], new Action(() =>
                     {
-                        // apply skill logic (area damage / status)
-                        playerEquipment.UseSkill(targets);
+                        // apply skill logic (area damage / status) via resolved equipment
+                        equip.UseSkill(targets);
 
                         // return to start then end turn (if method exists)
                         var retMethod = goAI.GetType().GetMethod("ReturnToStart", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -245,26 +295,27 @@ public class WeaponUIController : MonoBehaviour
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[WeaponUIController] Reflection invoke StrongAttack failed: {ex.Message}");
+                    Debug.LogWarning("[WeaponUIController] Reflection invoke StrongAttack failed: " + ex.Message);
                 }
             }
 
             // Fallback: no StrongAttack method or reflection failed -> just play skill without movement
-            playerEquipment.UseSkill(targets);
+            equip.UseSkill(targets);
             if (turnManager != null) turnManager.EndTurn();
             SetButtonsInteractable(true);
         }
         else
         {
-            playerEquipment.UseSkill(targets);
+            equip.UseSkill(targets);
             if (turnManager != null) turnManager.EndTurn();
         }
     }
 
     public void OnSwapButtonClicked()
     {
-        if (playerEquipment == null) { Debug.LogWarning("[WeaponUIController] playerEquipment not assigned."); return; }
-        playerEquipment.SwapToNextWeapon();
+        var equip = ResolveActiveCharacterEquipment();
+        if (equip == null) { Debug.LogWarning("[WeaponUIController] playerEquipment not assigned."); return; }
+        equip.SwapToNextWeapon();
         RefreshUI();
         Debug.Log("[WeaponUIController] Swapped weapon via UI");
     }

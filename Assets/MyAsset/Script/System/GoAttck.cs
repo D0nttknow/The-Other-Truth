@@ -1,12 +1,12 @@
 using UnityEngine;
 using System;
 using System.Collections;
+using System.Linq;
 
 public class GoAttck : MonoBehaviour
 {
     public Vector3 startPosition;
     public float speed = 10f;
-    // optional: reference to the Player GameObject, only needed if this script is on a child object
     public GameObject playerObject;
 
     void Start()
@@ -17,7 +17,7 @@ public class GoAttck : MonoBehaviour
     public void ResetStartPosition()
     {
         startPosition = transform.position;
-        Debug.Log($"[GoAttck] Reset startPosition: {startPosition} (on {gameObject.name})");
+        Debug.Log("[GoAttck] Reset startPosition: " + startPosition + " (on " + gameObject.name + ")");
     }
 
     // Normal attack entry (keeps old interface)
@@ -43,8 +43,8 @@ public class GoAttck : MonoBehaviour
     // Strong attack: accept explicit GameObject target and callback
     public void StrongAttackMonster(GameObject target, Action onComplete)
     {
-        string targetInfo = target != null ? $"{target.name} id={target.GetInstanceID()}" : "null";
-        Debug.Log($"[GoAttck] StrongAttackMonster called on {gameObject.name} (id={gameObject.GetInstanceID()}) with target={targetInfo}");
+        string info = (target != null) ? (target.name + " id=" + target.GetInstanceID()) : "null";
+        Debug.Log("[GoAttck] StrongAttackMonster called on " + gameObject.name + " (id=" + gameObject.GetInstanceID() + ") with target=" + info);
 
         if (target == null)
         {
@@ -56,25 +56,20 @@ public class GoAttck : MonoBehaviour
         Transform targetTransform = target.transform;
         GameObject targetObj = target;
 
-        // Start coroutine that uses the passed reference only
         StartCoroutine(StrongAttackCoroutine(targetTransform, targetObj, onComplete));
     }
 
     private IEnumerator StrongAttackCoroutine(Transform targetTransform, GameObject targetObj, Action onComplete)
     {
-        string targetInfo = targetObj != null ? $"{targetObj.name} id={targetObj.GetInstanceID()}" : "null";
-        string startPosStr = transform.position.ToString();
-        string targetPosStr = (targetTransform != null) ? targetTransform.position.ToString() : "null";
-        Debug.Log($"[GoAttck] StrongAttackCoroutine started: attacker={gameObject.name} id={gameObject.GetInstanceID()} target={targetInfo} startPos={startPosStr} targetPos={targetPosStr}");
+        string tinfo = (targetObj != null) ? (targetObj.name + " id=" + targetObj.GetInstanceID()) : "null";
+        Debug.Log("[GoAttck] StrongAttackCoroutine started: attacker=" + gameObject.name + " id=" + gameObject.GetInstanceID() + " target=" + tinfo);
 
-        float localSpeed = Mathf.Max(0.01f, speed); // use public speed (or override locally)
+        float localSpeed = Mathf.Max(0.01f, speed);
         float stopDistance = 1.0f;
 
-        // initial distance check/log
-        float initialDist = targetObj != null ? Vector3.Distance(transform.position, targetTransform.position) : -1f;
-        Debug.Log($"[GoAttck] initial distance to target = {initialDist}");
+        float initialDist = (targetObj != null && targetTransform != null) ? Vector3.Distance(transform.position, targetTransform.position) : -1f;
+        Debug.Log("[GoAttck] initial distance to target = " + initialDist);
 
-        // move toward target until within range or target destroyed
         while (targetObj != null && Vector3.Distance(transform.position, targetTransform.position) > stopDistance)
         {
             transform.position = Vector3.MoveTowards(transform.position, targetTransform.position, localSpeed * Time.deltaTime);
@@ -82,7 +77,7 @@ public class GoAttck : MonoBehaviour
         }
 
         float distNow = (targetObj != null && targetTransform != null) ? Vector3.Distance(transform.position, targetTransform.position) : -1f;
-        Debug.Log($"[GoAttck] movement loop ended. currentPos={transform.position} targetPos={targetPosStr} distNow={distNow}");
+        Debug.Log("[GoAttck] movement loop ended. currentPos=" + transform.position + " distNow=" + distNow);
 
         if (targetObj == null)
         {
@@ -91,12 +86,11 @@ public class GoAttck : MonoBehaviour
             yield break;
         }
 
-        // Apply damage using robust helper
-        int damage = 10; // <- adapt to actual skill damage
-        Debug.Log($"[GoAttck] Applying damage to target={targetObj.name} id={targetObj.GetInstanceID()} dmg={damage}");
+        int damage = 10; // adjust skill damage as needed
+        Debug.Log("[GoAttck] Applying damage to target=" + targetObj.name + " id=" + targetObj.GetInstanceID() + " dmg=" + damage);
         ApplyDamageToTarget(targetObj, damage);
 
-        // optional: play attack animation here and wait for it
+        // wait one frame for animation / effects if needed
         yield return null;
 
         onComplete?.Invoke();
@@ -113,7 +107,7 @@ public class GoAttck : MonoBehaviour
         ICharacterStat playerStat = (playerObject != null) ? playerObject.GetComponent<ICharacterStat>() : GetComponent<ICharacterStat>() as ICharacterStat;
         if (playerStat != null && targetMonsterStat != null)
         {
-            Debug.Log($"[GoAttck] MoveAndAttack: invoking playerStat.AttackMonster on {playerStat} for target {targetMonsterStat}");
+            Debug.Log("[GoAttck] MoveAndAttack: invoking playerStat.AttackMonster");
             playerStat.AttackMonster(targetMonsterStat);
             yield return new WaitForSeconds(1f);
         }
@@ -136,7 +130,7 @@ public class GoAttck : MonoBehaviour
         ICharacterStat playerStat = (playerObject != null) ? playerObject.GetComponent<ICharacterStat>() : GetComponent<ICharacterStat>() as ICharacterStat;
         if (playerStat != null && targetMonsterStat != null)
         {
-            Debug.Log($"[GoAttck] MoveAndStrongAttack: invoking playerStat.StrongAttackMonster for target {targetMonsterStat}");
+            Debug.Log("[GoAttck] MoveAndStrongAttack: invoking playerStat.StrongAttackMonster");
             playerStat.StrongAttackMonster(targetMonsterStat);
             yield return new WaitForSeconds(1f);
         }
@@ -146,7 +140,7 @@ public class GoAttck : MonoBehaviour
 
     public void ReturnToStart(Action onFinished)
     {
-        Debug.Log($"[GoAttck] Start ReturnToStart for {gameObject.name} to {startPosition}");
+        Debug.Log("[GoAttck] Start ReturnToStart for " + gameObject.name + " to " + startPosition);
         StartCoroutine(ReturnCoroutine(onFinished));
     }
 
@@ -157,12 +151,11 @@ public class GoAttck : MonoBehaviour
             transform.position = Vector3.MoveTowards(transform.position, startPosition, speed * Time.deltaTime);
             yield return null;
         }
-        Debug.Log($"[GoAttck] Returned to startPosition: {startPosition} for {gameObject.name}");
+        Debug.Log("[GoAttck] Returned to startPosition: " + startPosition + " for " + gameObject.name);
         onFinished?.Invoke();
     }
 
     // ---------------- Helper: robust damage application ----------------
-    // แทนที่ฟังก์ชัน ApplyDamageToTarget เดิมใน GoAttck.cs ด้วยนี้
     void ApplyDamageToTarget(GameObject targetObj, int damage)
     {
         if (targetObj == null)
@@ -171,92 +164,113 @@ public class GoAttck : MonoBehaviour
             return;
         }
 
+        // Log components on target to help debugging
+        var comps = targetObj.GetComponents<MonoBehaviour>() ?? new MonoBehaviour[0];
+        Debug.Log("[GoAttck] Target '" + targetObj.name + "' components: " + string.Join(", ", comps.Select(c => c != null ? c.GetType().Name : "null")));
+
+        // 0) Direct known stat classes (call TakeDamage if present)
+        var mokou = targetObj.GetComponent<StatEnemieMokou>();
+        if (mokou != null)
+        {
+            Debug.Log("[GoAttck] Found StatEnemieMokou, calling TakeDamage");
+            mokou.TakeDamage(damage);
+            return;
+        }
+        var e1 = targetObj.GetComponent<StatEnemie1Monster>();
+        if (e1 != null)
+        {
+            Debug.Log("[GoAttck] Found StatEnemie1Monster, calling TakeDamage");
+            e1.TakeDamage(damage);
+            return;
+        }
+
         // 1) IDamageable
         var dmgComp = targetObj.GetComponent<IDamageable>();
         if (dmgComp != null)
         {
-            try { dmgComp.TakeDamage(damage); Debug.Log($"[GoAttck] Applied {damage} via IDamageable to {targetObj.name}"); return; }
-            catch (Exception ex) { Debug.LogWarning($"[GoAttck] IDamageable.TakeDamage threw: {ex.Message}"); }
+            try { dmgComp.TakeDamage(damage); Debug.Log("[GoAttck] Applied " + damage + " via IDamageable to " + targetObj.name); return; }
+            catch (Exception ex) { Debug.LogWarning("[GoAttck] IDamageable.TakeDamage threw: " + ex.Message); }
         }
 
-        // 2) EnemyStats (if your enemies implement this)
+        // 2) EnemyStats
         var es = targetObj.GetComponent<EnemyStats>();
         if (es != null)
         {
-            try { es.TakeDamage(damage); Debug.Log($"[GoAttck] Applied {damage} via EnemyStats to {targetObj.name}"); return; }
-            catch (Exception ex) { Debug.LogWarning($"[GoAttck] EnemyStats.TakeDamage threw: {ex.Message}"); }
+            try { es.TakeDamage(damage); Debug.Log("[GoAttck] Applied " + damage + " via EnemyStats to " + targetObj.name); return; }
+            catch (Exception ex) { Debug.LogWarning("[GoAttck] EnemyStats.TakeDamage threw: " + ex.Message); }
         }
 
-        // 3) IMonsterStat or other enemy stat types that may store hp (try to call common method names via reflection)
+        // 3) IMonsterStat (try common methods via reflection, or adjust hp fields)
         var im = targetObj.GetComponent<IMonsterStat>();
         if (im != null)
         {
-            // try common method names on monster stat (TakeDamage, ReceiveDamage, ApplyDamage)
             var statType = im.GetType();
-            string[] candidates = { "TakeDamage", "ReceiveDamage", "ApplyDamage", "Damage", "Hit" };
-            foreach (var name in candidates)
+            Debug.Log("[GoAttck] Found IMonsterStat runtime type " + statType.Name + " on " + targetObj.name);
+
+            string[] methodCandidates = new string[] { "TakeDamage", "ReceiveDamage", "ApplyDamage", "Damage", "Hit" };
+            foreach (var mname in methodCandidates)
             {
-                var m = statType.GetMethod(name, new Type[] { typeof(int) });
+                var m = statType.GetMethod(mname, new Type[] { typeof(int) });
                 if (m != null)
                 {
-                    try { m.Invoke(im, new object[] { damage }); Debug.Log($"[GoAttck] Applied {damage} via {statType.Name}.{name} to {targetObj.name}"); return; }
-                    catch (Exception ex) { Debug.LogWarning($"[GoAttck] Invocation {statType.Name}.{name} failed: {ex.Message}"); }
+                    try { m.Invoke(im, new object[] { damage }); Debug.Log("[GoAttck] Applied " + damage + " via " + statType.Name + "." + mname); return; }
+                    catch (Exception ex) { Debug.LogWarning("[GoAttck] Invocation " + statType.Name + "." + mname + " failed: " + ex.Message); }
                 }
             }
 
-            // try hp-like fields (monsterHp, hp)
             var hpField = statType.GetField("monsterHp") ?? statType.GetField("hp") ?? statType.GetField("currentHp");
             if (hpField != null)
             {
                 try
                 {
-                    object fieldVal = hpField.GetValue(im);
-                    if (fieldVal is int currentHp)
+                    object val = hpField.GetValue(im);
+                    if (val is int cur)
                     {
-                        int newHp = Mathf.Max(0, currentHp - damage);
+                        int newHp = Mathf.Max(0, cur - damage);
                         hpField.SetValue(im, newHp);
-                        Debug.Log($"[GoAttck] Reduced stat field {hpField.Name} by {damage} on {targetObj.name} (new {hpField.Name}={newHp})");
+                        Debug.Log("[GoAttck] Reduced " + hpField.Name + " by " + damage + " on " + targetObj.name + " (new " + hpField.Name + "=" + newHp + ")");
                         return;
                     }
                 }
-                catch (Exception ex) { Debug.LogWarning($"[GoAttck] Failed modifying {hpField.Name} on {targetObj.name}: {ex.Message}"); }
+                catch (Exception ex) { Debug.LogWarning("[GoAttck] Failed modifying " + hpField.Name + " on " + targetObj.name + ": " + ex.Message); }
             }
         }
 
-        // 4) PlayerStat fallback (if players are targets)
+        // 4) PlayerStat fallback
         var ps = targetObj.GetComponent<PlayerStat>();
         if (ps != null)
         {
-            var type = ps.GetType();
-            var method = type.GetMethod("TakeDamage", new Type[] { typeof(int) });
+            var ptype = ps.GetType();
+            var method = ptype.GetMethod("TakeDamage", new Type[] { typeof(int) });
             if (method != null)
             {
-                try { method.Invoke(ps, new object[] { damage }); Debug.Log($"[GoAttck] Applied {damage} via PlayerStat.TakeDamage to {targetObj.name}"); return; }
-                catch (Exception ex) { Debug.LogWarning($"[GoAttck] PlayerStat.TakeDamage invocation failed: {ex.Message}"); }
+                try { method.Invoke(ps, new object[] { damage }); Debug.Log("[GoAttck] Applied " + damage + " via PlayerStat.TakeDamage to " + targetObj.name); return; }
+                catch (Exception ex) { Debug.LogWarning("[GoAttck] PlayerStat.TakeDamage invocation failed: " + ex.Message); }
             }
-            var hpField = type.GetField("hp");
+            var hpField = ptype.GetField("hp");
             if (hpField != null)
             {
-                try { object val = hpField.GetValue(ps); if (val is int cur) { int newHp = Mathf.Max(0, cur - damage); hpField.SetValue(ps, newHp); Debug.Log($"[GoAttck] Reduced hp on {ps.name} to {newHp}"); return; } }
-                catch (Exception ex) { Debug.LogWarning($"[GoAttck] Failed to reduce hp field on {ps.name}: {ex.Message}"); }
+                try { object v = hpField.GetValue(ps); if (v is int cur) { int newHp = Mathf.Max(0, cur - damage); hpField.SetValue(ps, newHp); Debug.Log("[GoAttck] Reduced hp on " + ps.name + " to " + newHp); return; } }
+                catch (Exception ex) { Debug.LogWarning("[GoAttck] Failed to reduce hp field on " + ps.name + ": " + ex.Message); }
             }
         }
 
-        // 5) Last resort: try to find any method on the GameObject components whose name contains "Take" or "Damage" and accepts an int
-        var comps = targetObj.GetComponents<MonoBehaviour>();
+        // 5) Last resort: scan for any component method that accepts (int) and contains Take/Damage/Hit in the name
         foreach (var c in comps)
         {
+            if (c == null) continue;
             var t = c.GetType();
-            var methods = t.GetMethods().Where(m => (m.Name.IndexOf("Take", StringComparison.OrdinalIgnoreCase) >= 0 || m.Name.IndexOf("Damage", StringComparison.OrdinalIgnoreCase) >= 0 || m.Name.IndexOf("Hit", StringComparison.OrdinalIgnoreCase) >= 0) && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(int));
+            var methods = t.GetMethods().Where(m => (m.Name.IndexOf("Take", StringComparison.OrdinalIgnoreCase) >= 0
+                                                  || m.Name.IndexOf("Damage", StringComparison.OrdinalIgnoreCase) >= 0
+                                                  || m.Name.IndexOf("Hit", StringComparison.OrdinalIgnoreCase) >= 0)
+                                                  && m.GetParameters().Length == 1 && m.GetParameters()[0].ParameterType == typeof(int));
             foreach (var m in methods)
             {
-                try { m.Invoke(c, new object[] { damage }); Debug.Log($"[GoAttck] Applied {damage} via {t.Name}.{m.Name} to {targetObj.name}"); return; }
-                catch { /* ignore and try next */ }
+                try { m.Invoke(c, new object[] { damage }); Debug.Log("[GoAttck] Applied " + damage + " via " + t.Name + "." + m.Name + " to " + targetObj.name); return; }
+                catch (Exception ex) { Debug.LogWarning("[GoAttck] Fallback invoke " + t.Name + "." + m.Name + " threw: " + ex.Message); }
             }
         }
 
         Debug.LogWarning("[GoAttck] No damage API found on target: " + targetObj.name);
     }
 }
-
-    
