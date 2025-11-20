@@ -20,7 +20,7 @@ public class WeaponUIController : MonoBehaviour
 {
     [Header("References")]
     public CharacterEquipment playerEquipment; // ลาก Player GameObject ที่มี CharacterEquipment
-    public TurnManager turnManager;             // ลาก TurnManager (หรือ leave null แล้วใช้ TurnManager.Instance)
+    public TurnBaseSystem turnManager; // ลาก TurnManager (หรือ leave null แล้วใช้ TurnManager.Instance)
 
     [Header("Buttons / UI")]
     public Button normalButton;

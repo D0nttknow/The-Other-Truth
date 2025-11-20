@@ -1,11 +1,14 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// สร้าง UI แสดงลำดับเทิร์น (icon list) โดยเรียก RefreshOrder จาก TurnManager
-/// - ต้องมี iconPrefab ที่มี TurnOrderIcon component (Image + optional Text)
-/// - container: parent (UI) ที่มี HorizontalLayoutGroup / Vertical layout
+/// Turn order UI helper (robust):
+/// - Call RefreshFromManager() to pull lists from the project's turn manager (supports TurnBaseSystem or TurnManager)
+/// - Or set iconPrefab/container/defaultSprite in inspector and enable autoRefresh (convenience only)
+/// - Safer reflection when reading private turnIndex and robust null-checks + debug logs
 /// </summary>
 public class TurnOrderUI : MonoBehaviour
 {
@@ -23,31 +26,145 @@ public class TurnOrderUI : MonoBehaviour
     [Tooltip("If true, RefreshOrder will be called every frame for convenience (disable in production)")]
     public bool autoRefresh = false;
 
+    // optional: how often to auto-refresh (avoid every-frame cost)
+    public float autoRefreshInterval = 0.2f;
+    private float _autoTimer = 0f;
+
     private List<GameObject> spawned = new List<GameObject>();
 
     void Awake()
     {
         Instance = this;
+        if (iconPrefab == null) Debug.LogWarning("[TurnOrderUI] iconPrefab not set in inspector.");
+        if (container == null) Debug.LogWarning("[TurnOrderUI] container not set in inspector.");
     }
 
     void Update()
     {
-        if (autoRefresh && TurnManager.Instance != null)
+        if (!autoRefresh) return;
+        _autoTimer += Time.unscaledDeltaTime;
+        if (_autoTimer >= autoRefreshInterval)
         {
-            RefreshOrder(TurnManager.Instance.battlers, TurnManager.Instance.battlerObjects, GetTurnIndexSafe());
+            _autoTimer = 0f;
+            RefreshFromManager();
         }
     }
 
-    int GetTurnIndexSafe()
+    /// <summary>
+    /// Convenience: ask whatever Turn manager exists in your project and refresh UI.
+    /// Supports a singleton called TurnBaseSystem.Instance or TurnManager.Instance (or any similar type).
+    /// This method uses reflection to find battlers/battlerObjects/turnIndex fields/properties.
+    /// For reliability you should call RefreshOrder(...) directly from your turn manager when lists change.
+    /// </summary>
+    public void RefreshFromManager()
     {
-        if (TurnManager.Instance == null) return 0;
-        return Mathf.Clamp(TurnManager.Instance != null ? TurnManager.Instance.GetType().GetField("turnIndex", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(TurnManager.Instance) as int? ?? 0 : 0, 0, Mathf.Max(0, TurnManager.Instance.battlers.Count - 1));
+        // Try some known singletons
+        object tm = null;
+        // Try TurnBaseSystem.Instance
+        tm = GetSingletonInstanceByName("TurnBaseSystem");
+        if (tm == null) tm = GetSingletonInstanceByName("TurnManager");
+        if (tm == null)
+        {
+            // nothing to pull
+            // Debug only — don't spam in production
+            // Debug.Log("[TurnOrderUI] No Turn manager singleton found (TurnBaseSystem/TurnManager).");
+            return;
+        }
+
+        // get battlers list and battlerObjects list (try property or field)
+        var battlersObj = GetMemberValue(tm, "battlers") as System.Collections.IList;
+        var battlerObjectsObj = GetMemberValue(tm, "battlerObjects") as System.Collections.IList;
+        int currentIndex = GetTurnIndexFromManager(tm);
+
+        if (battlersObj == null || battlerObjectsObj == null)
+        {
+            Debug.LogWarning("[TurnOrderUI] Turn manager found but battlers/battlerObjects lists missing or null. Type=" + tm.GetType().Name);
+            return;
+        }
+
+        // Convert to strongly typed lists for RefreshOrder signature
+        var battlers = new List<Battler>();
+        var battlerObjects = new List<GameObject>();
+        foreach (var item in battlersObj) battlers.Add(item as Battler);
+        foreach (var item in battlerObjectsObj) battlerObjects.Add(item as GameObject);
+
+        RefreshOrder(battlers, battlerObjects, currentIndex);
+    }
+
+    // safe helper to read a "turnIndex" value from manager
+    int GetTurnIndexFromManager(object tm)
+    {
+        object val = GetMemberValue(tm, "turnIndex");
+        if (val == null)
+        {
+            // try property named currentTurnIndex or turnIdx etc.
+            val = GetMemberValue(tm, "currentTurnIndex") ?? GetMemberValue(tm, "turnIdx");
+        }
+
+        if (val == null) return 0;
+
+        // unbox/convert robustly
+        if (val is int) return (int)val;
+        if (val is long) return Convert.ToInt32((long)val);
+        if (val is short) return Convert.ToInt32((short)val);
+        int parsed;
+        if (int.TryParse(val.ToString(), out parsed)) return parsed;
+        return 0;
+    }
+
+    // reflection helpers
+    object GetMemberValue(object target, string name)
+    {
+        if (target == null) return null;
+        var t = target.GetType();
+        // try property
+        var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (p != null) return p.GetValue(target);
+        // try field
+        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.IgnoreCase);
+        if (f != null) return f.GetValue(target);
+        return null;
+    }
+
+    object GetSingletonInstanceByName(string typeName)
+    {
+        // Find a type with this name in loaded assemblies
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                var t = asm.GetType(typeName);
+                if (t == null) continue;
+                // look for static Instance or instance property
+                var p = t.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                if (p != null)
+                {
+                    var inst = p.GetValue(null);
+                    if (inst != null) return inst;
+                }
+                var f = t.GetField("Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+                if (f != null)
+                {
+                    var inst2 = f.GetValue(null);
+                    if (inst2 != null) return inst2;
+                }
+            }
+            catch { }
+        }
+        return null;
     }
 
     public void RefreshOrder(List<Battler> battlers, List<GameObject> battlerObjects, int currentIndex)
     {
         // safety
-        if (container == null || iconPrefab == null) return;
+        if (container == null || iconPrefab == null)
+        {
+            // helpful debug message
+            // only warn once to reduce spam
+            if (container == null) Debug.LogWarning("[TurnOrderUI] container is null. Assign a RectTransform in the inspector.");
+            if (iconPrefab == null) Debug.LogWarning("[TurnOrderUI] iconPrefab is null. Assign a prefab with TurnOrderIcon component.");
+            return;
+        }
 
         // clear existing
         foreach (var go in spawned) if (go != null) Destroy(go);
@@ -65,15 +182,19 @@ public class TurnOrderUI : MonoBehaviour
             var b = battlers[idx];
             var obj = battlerObjects[idx];
 
-            var iconGO = Instantiate(iconPrefab, container);
-            iconGO.name = $"TurnIcon_{idx}_{b.name}";
+            var iconGO = Instantiate(iconPrefab, container, false);
+            iconGO.name = $"TurnIcon_{idx}_{(b != null ? b.name : "null")}";
             spawned.Add(iconGO);
 
             var icon = iconGO.GetComponent<TurnOrderIcon>();
             if (icon != null)
             {
                 Sprite s = GetSpriteFromGameObject(obj);
-                icon.SetData(b.name, s ?? defaultSprite, isCurrent: i == 0);
+                icon.SetData(b != null ? b.name : "Unknown", s ?? defaultSprite, isCurrent: i == 0);
+            }
+            else
+            {
+                Debug.LogWarning("[TurnOrderUI] iconPrefab missing TurnOrderIcon component on " + iconGO.name);
             }
         }
     }

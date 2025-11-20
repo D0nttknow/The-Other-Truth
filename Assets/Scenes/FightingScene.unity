@@ -347,6 +347,7 @@ MonoBehaviour:
   container: {fileID: 881496622}
   defaultSprite: {fileID: 0}
   autoRefresh: 0
+  autoRefreshInterval: 0.2
 --- !u!1 &76577944
 GameObject:
   m_ObjectHideFlags: 0
@@ -387,6 +388,7 @@ MonoBehaviour:
   skillCooldownText: {fileID: 0}
   swapButton: {fileID: 1036105654}
   swapLabel: {fileID: 0}
+  autoRecoverySeconds: 6
 --- !u!4 &76577946
 Transform:
   m_ObjectHideFlags: 0
@@ -5454,7 +5456,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d17c9c0ec6986a34c9f62250ea1792b9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EndDisButton
-  playerActionButton: {fileID: 852573518}
+  playerActionButton: {fileID: 0}
   turnManager: {fileID: 0}
 --- !u!114 &1743052211
 MonoBehaviour:
