@@ -226,8 +226,10 @@ public class PerCharacterUIController : MonoBehaviour
     // Try to get selected monster; fallback to pointer raycast unless pointer is over UI
     GameObject GetSelectedOrPointerMonster(TurnBaseSystem tm)
     {
+        // prefer tm.selectedMonster if present
         if (tm != null && tm.selectedMonster != null) return tm.selectedMonster;
 
+        // fallback: try TurnManager if assigned and different
         try
         {
             if (turnManager != null && turnManager != tm)
@@ -242,7 +244,7 @@ public class PerCharacterUIController : MonoBehaviour
         }
         catch { }
 
-        // avoid pointer fallback when pointer is over UI
+        // If pointer is over UI, avoid pointer fallback (prevents catching world objects under UI)
         try
         {
             if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return null;
@@ -350,15 +352,31 @@ public class PerCharacterUIController : MonoBehaviour
             return;
         }
 
-        // Very early global lock: prevent other panels from also firing before we established target/locks.
+        // Early global lock: prevent other panels from starting concurrently
         if (s_globalActionInProgress)
         {
             Debug.LogWarning("[PerCharacterUI] Ignored OnNormalClicked because global action lock is set. panel=" + gameObject.name);
             return;
         }
+        // set both locks early so duplicate calls are ignored immediately
         s_globalActionInProgress = true;
+        _localActionInProgress = true;
 
-        var target = GetSelectedOrPointerMonster(tm);
+        // Prefer explicit selection on the TurnBaseSystem (tm.selectedMonster or singleton instance) before pointer fallback
+        GameObject target = null;
+        try
+        {
+            if (tm != null && tm.selectedMonster != null) target = tm.selectedMonster;
+            else
+            {
+                var inst = TurnBaseSystem.Instance;
+                if (inst != null && inst.selectedMonster != null) target = inst.selectedMonster;
+            }
+        }
+        catch { }
+
+        if (target == null) target = GetSelectedOrPointerMonster(tm);
+
         if (target == null)
         {
             Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer");
@@ -395,18 +413,21 @@ public class PerCharacterUIController : MonoBehaviour
 
             try
             {
+                // AttackMonster should call this callback at the hit-frame
                 goAI.AttackMonster(target, () =>
                 {
                     try
                     {
                         Debug.Log("[PerCharacterUI] Attack hit callback - applying damage via CharacterEquipment");
 
+                        // Apply damage; when damage application completes it should call onComplete
                         playerEquipment.DoNormalAttack(target, () =>
                         {
                             try
                             {
                                 Debug.Log("[PerCharacterUI] Damage applied callback - returning to start");
 
+                                // Return to start, then notify TurnBaseSystem by calling OnPlayerReturned (so TurnBaseSystem manages EndTurn)
                                 goAI.ReturnToStart(() =>
                                 {
                                     try
@@ -533,14 +554,34 @@ public class PerCharacterUIController : MonoBehaviour
             return;
         }
 
-        if (_localActionInProgress) { Debug.Log("[PerCharacterUI] OnSkillClicked ignored because local action in progress"); return; }
+        // set locks early to avoid duplicates
+        s_globalActionInProgress = true;
         _localActionInProgress = true;
 
-        var selected = GetSelectedOrPointerMonster(tm);
-        if (selected == null) { Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer for skill"); _localActionInProgress = false; return; }
+        // prefer tm.selectedMonster first then fallback
+        GameObject selected = null;
+        try
+        {
+            if (tm != null && tm.selectedMonster != null) selected = tm.selectedMonster;
+            else
+            {
+                var inst = TurnBaseSystem.Instance;
+                if (inst != null && inst.selectedMonster != null) selected = inst.selectedMonster;
+            }
+        }
+        catch { }
+
+        if (selected == null) selected = GetSelectedOrPointerMonster(tm);
+
+        if (selected == null)
+        {
+            Debug.LogWarning("[PerCharacterUI] No target selected or found under pointer for skill");
+            _localActionInProgress = false;
+            s_globalActionInProgress = false;
+            return;
+        }
 
         bool beganAction = TryBeginPlayerActionOnTurnManager(tm);
-        s_globalActionInProgress = true;
 
         SetAllButtonsInteractable(false);
         if (_recoveryCoroutine != null) StopCoroutine(_recoveryCoroutine);
