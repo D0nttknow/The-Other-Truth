@@ -717,18 +717,58 @@ public class PerCharacterUIController : MonoBehaviour
     {
         yield return new WaitForSeconds(seconds);
         Debug.LogWarning("[PerCharacterUIController] Recovery timeout reached (" + seconds + "s) — re-enabling buttons to avoid stuck state.");
+
+        // restore UI
         SetAllButtonsInteractable(true);
+
+        // release locks so UI/turn system can proceed
+        try
+        {
+            _localActionInProgress = false;
+            s_globalActionInProgress = false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerCharacterUIController] Recovery: failed to clear local/global locks: " + ex);
+        }
+
+        // best-effort: notify TurnBaseSystem if it still thinks action is in progress
+        try
+        {
+            var tbs = TurnBaseSystem.Instance;
+            if (tbs != null)
+            {
+                Debug.LogWarning("[PerCharacterUIController] Recovery: calling TurnBaseSystem.OnPlayerReturned() to clear possible stuck turn state.");
+                try { tbs.OnPlayerReturned(); }
+                catch (Exception innerEx) { Debug.LogWarning("[PerCharacterUIController] Recovery: TurnBaseSystem.OnPlayerReturned threw: " + innerEx); }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerCharacterUIController] Recovery: error when trying to notify TurnBaseSystem: " + ex);
+        }
+
         _recoveryCoroutine = null;
     }
-
-    int GetFieldInt(object obj, string name)
+    // วางภายในคลาส PerCharacterUIController (ก่อน "}" ปิดคลาส)
+    private int GetFieldInt(object obj, string name)
     {
         if (obj == null) return 0;
         var t = obj.GetType();
-        var f = t.GetField(name);
-        if (f != null) { var val = f.GetValue(obj); return val is int ? (int)val : 0; }
-        var p = t.GetProperty(name);
-        if (p != null) { var val = p.GetValue(obj); return val is int ? (int)val : 0; }
+        // ค้นหา field (public/private)
+        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (f != null)
+        {
+            var val = f.GetValue(obj);
+            return val is int ? (int)val : 0;
+        }
+        // ถ้าไม่เจอ field ลอง property (public/private)
+        var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (p != null)
+        {
+            var val = p.GetValue(obj);
+            return val is int ? (int)val : 0;
+        }
         return 0;
     }
 }
