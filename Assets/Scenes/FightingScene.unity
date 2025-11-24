@@ -5554,6 +5554,7 @@ MonoBehaviour:
   updateTurnOrderUI: 1
   defeatedRewards: []
   defeatedEnemies: []
+  perCharacterPanelPrefab: {fileID: 0}
 --- !u!4 &1795397623
 Transform:
   m_ObjectHideFlags: 0

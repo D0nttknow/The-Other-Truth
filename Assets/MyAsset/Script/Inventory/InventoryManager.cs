@@ -3,139 +3,66 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// Simple InventoryManager (singleton)
-/// - Stores item id -> count
-/// - API: AddItem, RemoveItem, GetCount, HasItem
-/// - Event OnInventoryChanged invoked when inventory changes
-/// - Simple persistence via PlayerPrefs (JSON)
+/// Inventory singleton เก็บไอเท็ม (consumables)
+/// - AddItem(ItemBase) เพิ่มเข้า inventory
+/// - UseItemAt(index, target) เรียก Use บนไอเท็ม ถ้าถูก consume จะลดจำนวน/ลบ
+/// - UI สามารถ subscribe OnInventoryChanged เพื่ออัปเดต
 /// </summary>
 public class InventoryManager : MonoBehaviour
 {
-    public static InventoryManager Instance { get; private set; }
+    public static InventoryManager Instance;
 
-    // Serializable entry for saving/loading
     [Serializable]
-    public class Entry { public string id; public int count; public Entry(string i, int c) { id = i; count = c; } }
+    public class InventoryEntry
+    {
+        public ItemBase item;
+        public int count = 1;
+    }
 
-    [Header("Data")]
-    // runtime storage (keeps insertion order)
-    public List<Entry> entries = new List<Entry>();
-
-    // quick lookup
-    private Dictionary<string, int> map = new Dictionary<string, int>();
-
+    public List<InventoryEntry> items = new List<InventoryEntry>();
     public event Action OnInventoryChanged;
-
-    const string SaveKey = "Inventory_v1";
 
     void Awake()
     {
-        if (Instance != null && Instance != this) { Destroy(gameObject); return; }
-        Instance = this;
-        DontDestroyOnLoad(gameObject);
-        Load();
+        if (Instance == null) Instance = this;
+        else if (Instance != this) Destroy(this);
     }
 
-    // Add item by id (from ItemDefinition.id), returns true if added
-    public bool AddItem(string itemId, int amount = 1)
+    public void AddItem(ItemBase it)
     {
-        if (string.IsNullOrEmpty(itemId) || amount <= 0) return false;
-
-        if (map.ContainsKey(itemId))
+        if (it == null) return;
+        var e = items.Find(x => x.item == it);
+        if (e == null)
         {
-            map[itemId] += amount;
-            // update entries list
-            var e = entries.Find(x => x.id == itemId);
-            if (e != null) e.count = map[itemId];
+            items.Add(new InventoryEntry() { item = it, count = 1 });
         }
         else
         {
-            map[itemId] = amount;
-            entries.Add(new Entry(itemId, amount));
+            e.count++;
         }
-
+        Debug.LogFormat("[Inventory] AddItem {0} -> count={1}", it.displayName, items.Find(x => x.item == it).count);
         OnInventoryChanged?.Invoke();
-        Save();
-        return true;
     }
 
-    // Remove up to amount, return true if at least one removed
-    public bool RemoveItem(string itemId, int amount = 1)
+    public void RemoveItemAt(int index)
     {
-        if (!map.ContainsKey(itemId) || amount <= 0) return false;
-
-        int have = map[itemId];
-        int remove = Mathf.Min(have, amount);
-        have -= remove;
-        if (have <= 0)
-        {
-            map.Remove(itemId);
-            entries.RemoveAll(x => x.id == itemId);
-        }
-        else
-        {
-            map[itemId] = have;
-            var e = entries.Find(x => x.id == itemId);
-            if (e != null) e.count = have;
-        }
-
+        if (index < 0 || index >= items.Count) return;
+        items.RemoveAt(index);
         OnInventoryChanged?.Invoke();
-        Save();
-        return remove > 0;
     }
 
-    public int GetCount(string itemId)
+    public bool UseItemAt(int index, GameObject target)
     {
-        if (map.TryGetValue(itemId, out int c)) return c;
-        return 0;
-    }
-
-    public bool HasItem(string itemId, int minAmount = 1)
-    {
-        return GetCount(itemId) >= minAmount;
-    }
-
-    public void Clear()
-    {
-        entries.Clear();
-        map.Clear();
-        OnInventoryChanged?.Invoke();
-        Save();
-    }
-
-    // persistence (simple)
-    [System.Serializable]
-    class SaveData { public List<Entry> items = new List<Entry>(); }
-
-    public void Save()
-    {
-        try
+        if (index < 0 || index >= items.Count) return false;
+        var entry = items[index];
+        if (entry == null || entry.item == null) return false;
+        bool consumed = entry.item.Use(target);
+        if (consumed)
         {
-            var sd = new SaveData();
-            sd.items = entries;
-            string json = JsonUtility.ToJson(sd);
-            PlayerPrefs.SetString(SaveKey, json);
-            PlayerPrefs.Save();
-            // Debug.Log("[Inventory] Saved " + json);
+            entry.count--;
+            if (entry.count <= 0) items.RemoveAt(index);
+            OnInventoryChanged?.Invoke();
         }
-        catch (System.Exception ex) { Debug.LogWarning("[Inventory] Save failed: " + ex); }
-    }
-
-    public void Load()
-    {
-        try
-        {
-            if (!PlayerPrefs.HasKey(SaveKey)) return;
-            string json = PlayerPrefs.GetString(SaveKey);
-            var sd = JsonUtility.FromJson<SaveData>(json);
-            if (sd?.items != null)
-            {
-                entries = new List<Entry>(sd.items);
-                map.Clear();
-                foreach (var e in entries) map[e.id] = e.count;
-                OnInventoryChanged?.Invoke();
-            }
-        }
-        catch (System.Exception ex) { Debug.LogWarning("[Inventory] Load failed: " + ex); }
+        return consumed;
     }
 }
