@@ -11,6 +11,13 @@ using UnityEngine.UI;
 /// - เก็บ set ของ battlers ที่ทำแอคชันในรอบปัจจุบัน; เมื่อทั้งหมดทำครบ => เพิ่ม round และแสดงบน UI
 /// - ปรับปรุงการป้องกัน null / index-out-of-range และ logging
 /// - เพิ่ม support สร้าง per-character UI panels อัตโนมัติและ expose CurrentBattlerObject / IsCurrentTurn
+///
+/// WIRING NOTES:
+/// - Assign poolOfConsumables in Inspector: list of ItemBase consumables to drop when monsters are defeated
+/// - Ensure InventoryManager GameObject exists in scene for loot collection
+/// - Attach PlayerLevel component to main character for level-based exp gain (fallback to PlayerStat.AddExp via reflection)
+/// - Attach WeaponHandler to characters for weapon buff/duration management (OnTurnEnd called each turn)
+/// - PartyAutoAttack can call OnBattlerTurnStart from StartTurn for AI-controlled characters
 /// </summary>
 public class TurnManager : MonoBehaviour
 {
@@ -50,6 +57,10 @@ public class TurnManager : MonoBehaviour
     [Header("Runtime references")]
     [Tooltip("ลาก Canvas หลักของ UI (Canvas) ที่ต้องการให้ persistent panels เป็นลูกของมัน เพื่อป้องกันการถูกปิดโดยพาเรนท์ชั่วคราว")]
     public Canvas defaultCanvas;
+
+    [Header("Loot System")]
+    [Tooltip("Pool of consumable items that can drop when monsters are defeated. Assign ItemBase assets here.")]
+    public List<ItemBase> poolOfConsumables;
 
     [Header("Behavior")]
     [Tooltip("ถ้าเปิด จะซ่อน persistentPlayerUIPanels ของผู้เล่นที่ไม่ได้เกี่ยวข้อง (แสดงเฉพาะ attacker/target) ระหว่างเหตุการณ์โจมตี")]
@@ -430,6 +441,25 @@ public class TurnManager : MonoBehaviour
 
     public void EndTurn()
     {
+        // Call WeaponHandler.OnTurnEnd() on the current battler if present
+        var currentBattler = CurrentBattlerObject;
+        if (currentBattler != null)
+        {
+            var wh = currentBattler.GetComponent<WeaponHandler>();
+            if (wh != null)
+            {
+                try
+                {
+                    wh.OnTurnEnd();
+                    Debug.Log($"[TurnManager] Called WeaponHandler.OnTurnEnd() on {currentBattler.name}");
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning($"[TurnManager] Exception calling WeaponHandler.OnTurnEnd() on {currentBattler.name}: {ex}");
+                }
+            }
+        }
+
         // Mark current battler as having acted in this round
         MarkCurrentBattlerActed();
 
@@ -576,6 +606,27 @@ public class TurnManager : MonoBehaviour
                 var ms = go.GetComponent<IMonsterStat>();
                 if (ms != null) RecordEnemyDefeated(ms);
                 else RecordEnemyDefeated(go);
+
+                // Generate loot drops when a monster is removed
+                if (poolOfConsumables != null && poolOfConsumables.Count > 0)
+                {
+                    var drops = LootGenerator.GenerateDrops(poolOfConsumables, 3);
+                    if (InventoryManager.Instance != null)
+                    {
+                        foreach (var item in drops)
+                        {
+                            if (item != null)
+                            {
+                                InventoryManager.Instance.AddItem(item);
+                                Debug.Log($"[TurnManager] Loot drop from {go.name}: {item.displayName}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[TurnManager] InventoryManager.Instance is null, cannot add loot drops. Ensure InventoryManager exists in scene.");
+                    }
+                }
             }
 
             // remove associated per-character panel if present
@@ -796,6 +847,7 @@ public class TurnManager : MonoBehaviour
 
     /// <summary>
     /// Distribute totalExp fairly among players, preserving the total (distribute remainder).
+    /// Prefers PlayerLevel.AddExp if available, falls back to PlayerStat.AddExp via reflection.
     /// </summary>
     void AwardExpToPlayers(int totalExp, List<GameObject> alivePlayers)
     {
@@ -808,16 +860,43 @@ public class TurnManager : MonoBehaviour
         {
             var p = alivePlayers[i];
             if (p == null) continue;
+            int grant = perPlayer + (i < remainder ? 1 : 0);
+
+            // Prefer PlayerLevel component if present
+            var pl = p.GetComponent<PlayerLevel>();
+            if (pl != null)
+            {
+                pl.AddExp(grant);
+                Debug.Log($"[TurnManager] Awarded {grant} EXP to {p.name} via PlayerLevel.AddExp");
+                continue;
+            }
+
+            // Fallback to PlayerStat.AddExp via reflection
             var ps = p.GetComponent<PlayerStat>();
             if (ps != null)
             {
-                int grant = perPlayer + (i < remainder ? 1 : 0);
-                ps.AddExp(grant);
-                Debug.Log($"[TurnManager] Awarded {grant} EXP to {p.name}");
+                // Try reflection to call AddExp method
+                var addExpMethod = ps.GetType().GetMethod("AddExp", new Type[] { typeof(int) });
+                if (addExpMethod != null)
+                {
+                    try
+                    {
+                        addExpMethod.Invoke(ps, new object[] { grant });
+                        Debug.Log($"[TurnManager] Awarded {grant} EXP to {p.name} via PlayerStat.AddExp (reflection)");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[TurnManager] Failed to invoke PlayerStat.AddExp on {p.name}: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning($"[TurnManager] Player {p.name} has PlayerStat but no AddExp method found.");
+                }
             }
             else
             {
-                Debug.LogWarning($"[TurnManager] Alive player {p.name} has no PlayerStat to receive EXP.");
+                Debug.LogWarning($"[TurnManager] Alive player {p.name} has no PlayerLevel or PlayerStat to receive EXP.");
             }
         }
     }

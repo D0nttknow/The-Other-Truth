@@ -138,8 +138,47 @@ public class CharacterEquipment : MonoBehaviour
     // helper used by input/ability system to call normal attack
     public void DoNormalAttack(GameObject target)
     {
-        if (weaponController != null) weaponController.NormalAttack(target);
-        else Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weapon equipped.");
+        if (weaponController == null) 
+        {
+            Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weapon equipped.");
+            return;
+        }
+
+        // Attempt to retrieve damage multiplier from WeaponHandler component if present
+        float mult = 1f;
+        var wh = GetComponent<WeaponHandler>();
+        if (wh != null)
+        {
+            mult = wh.CurrentDamageMultiplier;
+            Debug.Log($"[CharacterEquipment] Using damage multiplier {mult} from WeaponHandler on {gameObject.name}");
+        }
+
+        // Check if weaponController has NormalAttack(GameObject, float) overload via reflection
+        var normalAttackWithMultiplier = weaponController.GetType().GetMethod(
+            "NormalAttack", 
+            new Type[] { typeof(GameObject), typeof(float) }
+        );
+
+        if (normalAttackWithMultiplier != null)
+        {
+            try
+            {
+                normalAttackWithMultiplier.Invoke(weaponController, new object[] { target, mult });
+                Debug.Log($"[CharacterEquipment] Invoked NormalAttack(target, {mult}) via reflection");
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CharacterEquipment] Failed to invoke NormalAttack with multiplier: {ex.Message}");
+            }
+        }
+
+        // Fallback: use existing NormalAttack(GameObject) method
+        weaponController.NormalAttack(target);
+        if (mult != 1f)
+        {
+            Debug.Log($"[CharacterEquipment] Applied multiplier {mult} (note: WeaponController.NormalAttack doesn't support multiplier parameter)");
+        }
     }
 
     // helper to call skill; targets provided by targeting system / TurnManager
