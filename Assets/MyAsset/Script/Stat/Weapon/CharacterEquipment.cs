@@ -1,138 +1,100 @@
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using UnityEngine;
 
+/// <summary>
+/// Manages equipping weapons and swapping them. Holds a list of WeaponItem references (inventory for weapons).
+/// - Equip at index / Equip item by id
+/// - Swap to next weapon in list (during battle by input)
+/// - OnTurnStart() should be called by TurnManager when it's this player's turn start (to tick cooldown)
+///
+/// Changes in this version:
+/// - Removed direct Input.GetKeyDown usage from Update (avoid Input System conflicts).
+/// - Added OnEquipped / OnUnequipped events so UI can subscribe and update icons instantly.
+/// - Added helper methods: GetEquippedWeapon(), AddOwnedWeapon(), RemoveOwnedWeapon(), EquipById(), EquipAtIndex().
+/// - Improved SwapToNextWeapon() safety when current item is null or not found in ownedWeapons.
+/// - Ensured instantiated weapon instance has localScale=Vector3.one to avoid scale issues.
+/// </summary>
 [DisallowMultipleComponent]
 public class CharacterEquipment : MonoBehaviour
 {
+    [Tooltip("Where to mount weapon visuals (hand)")]
     public Transform weaponMount;
-    public List<WeaponItem> ownedWeapons = new List<WeaponItem>();
-    public WeaponItem currentWeaponItem;
 
+    // list of weapons this character owns; fill from Inventory (you can store itemId instead if needed)
+    public List<WeaponItem> ownedWeapons = new List<WeaponItem>();
+
+    // runtime instance of equipped weapon
+    public WeaponItem currentWeaponItem;
     private GameObject currentWeaponInstance;
     private WeaponController weaponController;
 
+    // Events for UI / other systems to subscribe
+    public event Action<WeaponItem> OnEquipped;
+    public event Action OnUnequipped;
+
     void Start()
     {
-        Debug.Log($"[CharacterEquipment] Start on {gameObject.name} currentWeaponItem={(currentWeaponItem != null ? currentWeaponItem.displayName : "null")}, weaponMount={(weaponMount != null ? weaponMount.name : "null")}, enabled={enabled}");
-
-        // auto-find/create mount if not set (look for child named "Hand" or "WeaponMount")
+        // auto-assign weaponMount from animator right hand if not set (optional)
         if (weaponMount == null)
         {
-            Transform hand = transform.Find("Hand") ?? transform.Find("WeaponMount");
-            if (hand != null) weaponMount = hand;
-            else
+            var anim = GetComponent<Animator>();
+            if (anim != null && anim.isHuman)
             {
-                // create mount at runtime
-                GameObject go = new GameObject("WeaponMount");
-                go.transform.SetParent(transform, false);
-                go.transform.localPosition = Vector3.zero;
-                weaponMount = go.transform;
-                Debug.Log("[CharacterEquipment] Created WeaponMount at runtime");
+                var right = anim.GetBoneTransform(HumanBodyBones.RightHand);
+                if (right != null) weaponMount = right;
             }
         }
 
-        // auto-equip if inspector has item assigned
-        if (currentWeaponItem != null)
-        {
-            Equip(currentWeaponItem);
-        }
+        // If there's at least one owned weapon and nothing equipped, optionally equip the first one
+        // Uncomment the next line if you want auto-equip on Start when ownedWeapons has items:
+        // if (currentWeaponItem == null && ownedWeapons != null && ownedWeapons.Count > 0) Equip(ownedWeapons[0]);
     }
 
-    // Make it callable from inspector for quick testing
-    [ContextMenu("Equip Now (Inspector)")]
-    public void EquipNowFromInspector()
-    {
-        Equip(currentWeaponItem);
-    }
+    // NOTE: Removed Update() input polling to avoid conflicts with Unity's new Input System.
+    // Input should be handled by a centralized input handler (PlayerInputHandler or UI buttons)
+    // which then calls SwapToNextWeapon(), DoNormalAttack(), UseSkill(), etc.
 
+    /// <summary>
+    /// Equip a specific WeaponItem (instantiates visual prefab or creates empty holder).
+    /// </summary>
     public void Equip(WeaponItem item)
     {
-        if (item == null)
-        {
-            Debug.LogWarning($"[CharacterEquipment] Equip called with null on {gameObject.name}");
-            return;
-        }
+        if (item == null) { Unequip(); return; }
+        if (currentWeaponItem == item) return;
 
-        Debug.Log($"[CharacterEquipment] Equipping {item.displayName} on {gameObject.name} (prefab={(item.weaponPrefab != null ? item.weaponPrefab.name : "null")})");
-
-        // destroy old
-        if (currentWeaponInstance != null)
-        {
-            Destroy(currentWeaponInstance);
-            currentWeaponInstance = null;
-            weaponController = null;
-        }
-
-        if (item.weaponPrefab != null)
-        {
-            currentWeaponInstance = Instantiate(item.weaponPrefab, weaponMount != null ? weaponMount : transform, false);
-            currentWeaponInstance.transform.localPosition = item.positionOffset;
-            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
-
-            weaponController = currentWeaponInstance.GetComponent<WeaponController>();
-            if (weaponController == null)
-            {
-                Debug.LogWarning("[CharacterEquipment] Prefab has no WeaponController; adding fallback component.");
-                weaponController = currentWeaponInstance.AddComponent<WeaponController>();
-            }
-
-            // try to apply item data to controller if available
-            try { weaponController.ApplyWeaponData(item); } catch { }
-        }
-        else
-        {
-            // fallback: create minimal GameObject with WeaponController so UI logic works
-            currentWeaponInstance = new GameObject("Weapon_" + item.displayName);
-            currentWeaponInstance.transform.SetParent(weaponMount != null ? weaponMount : transform, false);
-            currentWeaponInstance.transform.localPosition = item.positionOffset;
-            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
-            weaponController = currentWeaponInstance.AddComponent<WeaponController>();
-            try { weaponController.ApplyWeaponData(item); } catch { }
-            Debug.Log("[CharacterEquipment] Created runtime WeaponController fallback for " + item.displayName);
-        }
+        Unequip();
 
         currentWeaponItem = item;
 
-        // Try to raise an event or inform listeners: if you want add OnEquipped event later.
-        Debug.Log($"[CharacterEquipment] Equipped {item.displayName} => weaponController={(weaponController != null ? weaponController.GetType().Name : "null")}");
+        if (item.weaponPrefab != null && weaponMount != null)
+        {
+            currentWeaponInstance = Instantiate(item.weaponPrefab, weaponMount, false);
+            currentWeaponInstance.transform.localPosition = item.positionOffset;
+            currentWeaponInstance.transform.localEulerAngles = item.rotationOffset;
+            currentWeaponInstance.transform.localScale = Vector3.one;
+
+            weaponController = currentWeaponInstance.GetComponent<WeaponController>();
+            if (weaponController == null) weaponController = currentWeaponInstance.AddComponent<WeaponController>();
+        }
+        else
+        {
+            // create placeholder object under mount
+            var go = new GameObject($"Weapon_{item.displayName}");
+            go.transform.SetParent(weaponMount, false);
+            go.transform.localPosition = item.positionOffset;
+            go.transform.localEulerAngles = item.rotationOffset;
+            go.transform.localScale = Vector3.one;
+            currentWeaponInstance = go;
+            weaponController = go.AddComponent<WeaponController>();
+        }
+
+        if (weaponController != null) weaponController.ApplyWeaponData(item);
+
+        Debug.Log($"[CharacterEquipment] Equipped {item.displayName} on {gameObject.name}");
+        OnEquipped?.Invoke(item);
     }
 
-    // New: called by TurnManager at start of this battler's turn
-    // - decrements weapon cooldowns and forwards OnTurnStart to WeaponController if available
-    public void OnTurnStart()
-    {
-        try
-        {
-            if (weaponController != null)
-            {
-                // decrement cooldown if field exists (most WeaponController implementations use this)
-                try
-                {
-                    weaponController.skillCooldownRemaining = Mathf.Max(0, weaponController.skillCooldownRemaining - 1);
-                }
-                catch { /* ignore if field not present */ }
-
-                // call WeaponController.OnTurnStart() if it exists (use reflection to avoid hard dependency)
-                try
-                {
-                    var mi = weaponController.GetType().GetMethod("OnTurnStart", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (mi != null) mi.Invoke(weaponController, null);
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning($"[CharacterEquipment] Failed to invoke WeaponController.OnTurnStart: {ex}");
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[CharacterEquipment] OnTurnStart exception: {ex}");
-        }
-    }
-
-    // New: Unequip helper (called from EquipManager/UI)
     public void Unequip()
     {
         if (currentWeaponInstance != null)
@@ -141,78 +103,123 @@ public class CharacterEquipment : MonoBehaviour
             currentWeaponInstance = null;
         }
         weaponController = null;
-        currentWeaponItem = null;
-        Debug.Log($"[CharacterEquipment] Unequipped on {gameObject.name}");
+        if (currentWeaponItem != null)
+        {
+            currentWeaponItem = null;
+            OnUnequipped?.Invoke();
+        }
     }
 
-    // Existing accessor
+    /// <summary>
+    /// Swap to next owned weapon (wrap-around). Use this for in-battle quick-swap.
+    /// Public: input/UI should call this (do NOT rely on Update polling here).
+    /// </summary>
+    public void SwapToNextWeapon()
+    {
+        if (ownedWeapons == null || ownedWeapons.Count == 0) return;
+
+        int idx = currentWeaponItem == null ? -1 : ownedWeapons.IndexOf(currentWeaponItem);
+
+        int next;
+        if (idx < 0)
+        {
+            // if current not found, equip first
+            next = 0;
+        }
+        else
+        {
+            next = (idx + 1) % ownedWeapons.Count;
+        }
+
+        // if only one weapon, this will equip the same one (safe)
+        Equip(ownedWeapons[next]);
+    }
+
+    // helper used by input/ability system to call normal attack
+    public void DoNormalAttack(GameObject target)
+    {
+        if (weaponController != null) weaponController.NormalAttack(target);
+        else Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weapon equipped.");
+    }
+
+    // helper to call skill; targets provided by targeting system / TurnManager
+    public void UseSkill(IEnumerable<GameObject> targets)
+    {
+        if (weaponController != null) weaponController.UseSkill(targets);
+        else Debug.LogWarning("[CharacterEquipment] UseSkill: no weapon equipped.");
+    }
+
+    // Called by TurnManager to tick per-turn state (cooldowns)
+    public void OnTurnStart()
+    {
+        if (weaponController != null) weaponController.OnTurnStart();
+    }
+
+    // Public helpers / API ------------------------------------------------
+
+    /// <summary>
+    /// Returns the runtime WeaponController for the equipped weapon (may be null).
+    /// </summary>
     public WeaponController GetEquippedWeapon()
     {
         return weaponController;
     }
 
-    // Called by UI: do a normal attack and call onComplete when done
-    public void DoNormalAttack(GameObject target, Action onComplete)
-    {
-        Debug.Log($"[CharacterEquipment] DoNormalAttack on {gameObject.name} target={(target != null ? target.name : "null")}");
-        try
-        {
-            // Optionally delegate to WeaponController if it provides a method
-            var mi = weaponController != null ? weaponController.GetType().GetMethod("PerformNormalAttack", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) : null;
-            if (mi != null)
-            {
-                mi.Invoke(weaponController, new object[] { target, onComplete });
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[CharacterEquipment] Exception calling PerformNormalAttack: {ex}");
-        }
-
-        // fallback immediate completion
-        onComplete?.Invoke();
-    }
-
-    // Compatibility overload: allow callers to call DoNormalAttack(target) without callback.
-    public void DoNormalAttack(GameObject target)
-    {
-        DoNormalAttack(target, null);
-    }
-
-    // Called by UI: use skill on targets and call onComplete when done
-    public void UseSkill(List<GameObject> targets, Action onComplete)
-    {
-        Debug.Log($"[CharacterEquipment] UseSkill on {gameObject.name} targetsCount={(targets != null ? targets.Count : 0)}");
-        try
-        {
-            var mi = weaponController != null ? weaponController.GetType().GetMethod("PerformSkill", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) : null;
-            if (mi != null)
-            {
-                mi.Invoke(weaponController, new object[] { targets, onComplete });
-                return;
-            }
-        }
-        catch (Exception ex)
-        {
-            Debug.LogWarning($"[CharacterEquipment] Exception calling PerformSkill: {ex}");
-        }
-
-        onComplete?.Invoke();
-    }
-
-    // Compatibility overload: allow callers to call UseSkill(targets) without callback.
-    public void UseSkill(List<GameObject> targets)
-    {
-        UseSkill(targets, null);
-    }
-
-    // Swap to next weapon in ownedWeapons
-    public void SwapToNextWeapon()
+    /// <summary>
+    /// Equip by index in ownedWeapons. Safe checks included.
+    /// </summary>
+    public void EquipAtIndex(int index)
     {
         if (ownedWeapons == null || ownedWeapons.Count == 0) return;
-        int idx = ownedWeapons.IndexOf(currentWeaponItem);
-        int next = (idx + 1) % ownedWeapons.Count;
-        Equip(ownedWeapons[next]);
+        if (index < 0 || index >= ownedWeapons.Count) return;
+        Equip(ownedWeapons[index]);
+    }
+
+    /// <summary>
+    /// Equip by item id using a WeaponDatabase lookup (if you keep one).
+    /// </summary>
+    public void EquipById(string itemId, WeaponItem[] lookupList = null)
+    {
+        if (string.IsNullOrEmpty(itemId)) return;
+
+        // If a lookup list is provided, search it; otherwise search ownedWeapons first
+        WeaponItem found = null;
+        if (ownedWeapons != null)
+        {
+            foreach (var w in ownedWeapons)
+            {
+                if (w != null && w.id == itemId) { found = w; break; }
+            }
+        }
+
+        if (found == null && lookupList != null)
+        {
+            foreach (var w in lookupList)
+            {
+                if (w != null && w.id == itemId) { found = w; break; }
+            }
+        }
+
+        if (found != null) Equip(found);
+    }
+
+    /// <summary>
+    /// Add a weapon to ownedWeapons (does not auto-equip).
+    /// </summary>
+    public void AddOwnedWeapon(WeaponItem item)
+    {
+        if (item == null) return;
+        if (ownedWeapons == null) ownedWeapons = new List<WeaponItem>();
+        ownedWeapons.Add(item);
+    }
+
+    /// <summary>
+    /// Remove a weapon from ownedWeapons. If it was equipped, unequip.
+    /// </summary>
+    public void RemoveOwnedWeapon(WeaponItem item)
+    {
+        if (item == null || ownedWeapons == null) return;
+        if (ownedWeapons.Contains(item)) ownedWeapons.Remove(item);
+        if (currentWeaponItem == item) Unequip();
     }
 }

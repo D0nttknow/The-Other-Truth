@@ -1,19 +1,8 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
-using GameRaiwaa.Stat; // ถ้า BleedEffect/Status อยู่ที่นี่
+using GameRaiwaa.Stat; // ��� BleedEffect/Status ��������
 
-/// <summary>
-/// SwordWeapon: โค้ดตัวอย่างสำหรับการทำ damage + มีโอกาสทำให้ติด Bleed
-/// - ใส่ Debug.Log เพื่อช่วยดีบัก flow
-/// - พยายามใช้ reflection ในการเรียก StatusManager.ApplyStatus หาก type/ชื่อไม่ตรงกัน
-/// - เรียก BleedingIntegrationExample.OnBleedingApplied / HealthBarManager เพื่อแสดงไอคอนบน healthbar
-/// 
-/// วิธีใช้:
-/// - วางไฟล์นี้ใน Assets/.../Script/... (เช่น Assets/MyAsset/Script/Stat/Weapon/SwordWeapon.cs)
-/// - แน่ใจว่า BleedEffect, StatusManager, HealthBarManager, BleedingIntegrationExample อยู่ในโปรเจค
-/// - เชื่อมค่า WeaponItem ผ่าน ApplyWeaponData เมื่อ equip หรือ instantiate prefab
-/// </summary>
 public class SwordWeapon : MonoBehaviour
 {
     [Tooltip("Raw damage dealt by the attack before statuses (if you use HP directly)")]
@@ -36,13 +25,10 @@ public class SwordWeapon : MonoBehaviour
     {
         if (target == null) return;
 
-        Debug.Log($"[SwordWeapon] NormalAttack -> target={target.name}, baseDamage={baseDamage}");
         DealDamageToTarget(target, baseDamage);
 
         // roll bleed
-        float r = UnityEngine.Random.value;
-        Debug.Log($"[SwordWeapon] Normal bleed roll: rnd={r} vs chance={normalBleedChance}");
-        if (r <= normalBleedChance)
+        if (UnityEngine.Random.value <= normalBleedChance)
         {
             ApplyBleed(target);
         }
@@ -54,12 +40,8 @@ public class SwordWeapon : MonoBehaviour
         foreach (var t in targets)
         {
             if (t == null) continue;
-            Debug.Log($"[SwordWeapon] SkillAttack -> target={t.name}, baseDamage={baseDamage}");
             DealDamageToTarget(t, baseDamage);
-
-            float r = UnityEngine.Random.value;
-            Debug.Log($"[SwordWeapon] Skill bleed roll for {t.name}: rnd={r} vs chance={skillBleedChance}");
-            if (r <= skillBleedChance)
+            if (UnityEngine.Random.value <= skillBleedChance)
             {
                 ApplyBleed(t);
             }
@@ -68,30 +50,22 @@ public class SwordWeapon : MonoBehaviour
 
     void ApplyBleed(GameObject target)
     {
-        if (target == null)
-        {
-            Debug.LogWarning("[SwordWeapon] ApplyBleed called with null target.");
-            return;
-        }
+        if (target == null) return;
 
-        Debug.Log($"[SwordWeapon] ApplyBleed called on {target.name} (dur={bleedDurationTurns}, dmgPerTurn={bleedDamagePerTurn})");
-
-        // Create BleedEffect instance (constructor from your StatusEffect implementation)
         var bleed = new BleedEffect(bleedDurationTurns, bleedDamagePerTurn);
 
-        // Try to find a StatusManager component by type name (handles namespace differences)
+        // Try to find a StatusManager component
         Component smComp = null;
         foreach (var mb in target.GetComponents<MonoBehaviour>())
         {
             var t = mb.GetType();
-            if (t.Name == "StatusManager" || t.FullName == "GameRaiwaa.Stat.StatusManager" || t.FullName.EndsWith(".StatusManager"))
+            if (t.Name == "StatusManager" || t.FullName == "GameRaiwaa.Stat.StatusManager")
             {
                 smComp = mb;
                 break;
             }
         }
 
-        // If not found, try to locate the type by name and add it (best-effort)
         if (smComp == null)
         {
             var smType = Type.GetType("GameRaiwaa.Stat.StatusManager") ?? Type.GetType("StatusManager");
@@ -100,7 +74,6 @@ public class SwordWeapon : MonoBehaviour
                 try
                 {
                     smComp = target.AddComponent(smType);
-                    Debug.Log($"[SwordWeapon] Added StatusManager ({smType.FullName}) to {target.name} via reflection.");
                 }
                 catch (Exception ex)
                 {
@@ -111,10 +84,9 @@ public class SwordWeapon : MonoBehaviour
 
         if (smComp != null)
         {
-            // Try common ApplyStatus signatures
             var applyMethod = smComp.GetType().GetMethod("ApplyStatus", new Type[] { typeof(StatusEffect) })
                               ?? smComp.GetType().GetMethod("ApplyStatus", new Type[] { typeof(object) })
-                              ?? smComp.GetType().GetMethod("ApplyStatus", Type.EmptyTypes);
+                              ?? smComp.GetType().GetMethod("ApplyStatus");
 
             if (applyMethod != null)
             {
@@ -122,27 +94,6 @@ public class SwordWeapon : MonoBehaviour
                 {
                     applyMethod.Invoke(smComp, new object[] { bleed });
                     Debug.Log($"[SwordWeapon] Applied Bleed to {target.name} via {smComp.GetType().Name}.");
-                    // Notify UI integration to show bleeding icon (if available)
-                    try
-                    {
-                        // Prefer integration helper if present
-                        var onBleed = typeof(BleedingIntegrationExample).GetMethod("OnBleedingApplied");
-                        if (onBleed != null)
-                        {
-                            onBleed.Invoke(null, new object[] { target, 1 });
-                        }
-                        else
-                        {
-                            // fallback: direct call to HealthBarManager
-                            var sprite = BleedingIntegrationExample.bleedingSprite ?? Resources.Load<Sprite>("StatusIcons/bleeding");
-                            HealthBarManager.Instance?.AddStatusIconFor(target, "bleeding", sprite, "Bleeding");
-                        }
-                        Debug.Log($"[SwordWeapon] Requested bleeding icon for {target.name}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogWarning($"[SwordWeapon] Failed to request bleeding icon: {ex}");
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -168,7 +119,6 @@ public class SwordWeapon : MonoBehaviour
         if (damageable != null)
         {
             damageable.TakeDamage(dmg);
-            Debug.Log($"[SwordWeapon] IDamageable.TakeDamage({dmg}) on {target.name}");
             return;
         }
 
@@ -178,7 +128,7 @@ public class SwordWeapon : MonoBehaviour
             var meth = ps.GetType().GetMethod("TakeDamage", new Type[] { typeof(int) });
             if (meth != null)
             {
-                try { meth.Invoke(ps, new object[] { dmg }); Debug.Log($"[SwordWeapon] PlayerStat.TakeDamage invoked on {target.name}"); return; }
+                try { meth.Invoke(ps, new object[] { dmg }); return; }
                 catch { Debug.LogWarning($"[SwordWeapon] PlayerStat.TakeDamage invoked but failed on {target.name}."); }
             }
 
@@ -223,14 +173,12 @@ public class SwordWeapon : MonoBehaviour
                 if (method != null)
                 {
                     method.Invoke(ms, new object[] { dmg });
-                    Debug.Log($"[SwordWeapon] IMonsterStat.TakeDamage({dmg}) on {target.name}");
                     return;
                 }
             }
             catch { }
         }
 
-        // fallback: TurnManager battler list (if you use TurnManager based health tracking)
         if (TurnManager.Instance != null)
         {
             var idx = TurnManager.Instance.battlerObjects.IndexOf(target);
@@ -262,5 +210,8 @@ public class SwordWeapon : MonoBehaviour
         skillBleedChance = item.skillBleedChance;
         bleedDurationTurns = item.bleedDuration;
         bleedDamagePerTurn = item.bleedDmgPerTurn;
+
+        // If the weapon prefab contains additional components/visuals you want to configure,
+        // you can add extra initialization here (e.g., set sprite/icon, set animation offsets, etc.)
     }
 }
