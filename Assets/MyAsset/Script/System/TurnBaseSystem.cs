@@ -61,6 +61,9 @@ public class TurnManager : MonoBehaviour
     [Header("Loot System")]
     [Tooltip("Pool of consumable items that can drop when monsters are defeated. Assign ItemBase assets here.")]
     public List<ItemBase> poolOfConsumables;
+    
+    [Tooltip("Number of items to drop per defeated monster (default: 3)")]
+    public int lootDropCount = 3;
 
     [Header("Behavior")]
     [Tooltip("ถ้าเปิด จะซ่อน persistentPlayerUIPanels ของผู้เล่นที่ไม่ได้เกี่ยวข้อง (แสดงเฉพาะ attacker/target) ระหว่างเหตุการณ์โจมตี")]
@@ -610,7 +613,7 @@ public class TurnManager : MonoBehaviour
                 // Generate loot drops when a monster is removed
                 if (poolOfConsumables != null && poolOfConsumables.Count > 0)
                 {
-                    var drops = LootGenerator.GenerateDrops(poolOfConsumables, 3);
+                    var drops = LootGenerator.GenerateDrops(poolOfConsumables, lootDropCount);
                     if (InventoryManager.Instance != null)
                     {
                         foreach (var item in drops)

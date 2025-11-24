@@ -13,9 +13,11 @@ The gameplay systems have been wired together with minimal changes to existing c
 The `TurnManager` component (in `TurnBaseSystem.cs`) needs the following setup:
 
 - **poolOfConsumables**: Assign a list of `ItemBase` consumable assets in the Inspector
-  - These items will be randomly dropped when monsters are defeated (3 items per monster)
+  - These items will be randomly dropped when monsters are defeated
   - Create consumable assets via `Create -> Gameplay -> ConsumableHeal/ConsumableAtk/ConsumableDef`
   - Drag the created assets into the `poolOfConsumables` list
+- **lootDropCount**: Number of items to drop per defeated monster (default: 3)
+  - Adjust this value to control how many items drop from each enemy
 
 ### 2. InventoryManager in Scene
 
@@ -77,7 +79,7 @@ The following methods are called automatically during turn flow:
    - Marks battler as acted and advances turn index
 
 4. **Monster Defeated** (`TurnManager.RemoveBattler()`):
-   - Generates loot drops using `LootGenerator.GenerateDrops(poolOfConsumables, 3)`
+   - Generates loot drops using `LootGenerator.GenerateDrops(poolOfConsumables, lootDropCount)`
    - Adds items to `InventoryManager` via `InventoryManager.Instance.AddItem(item)`
    - Logs each dropped item
 

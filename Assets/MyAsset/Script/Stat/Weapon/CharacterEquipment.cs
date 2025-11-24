@@ -177,7 +177,7 @@ public class CharacterEquipment : MonoBehaviour
         weaponController.NormalAttack(target);
         if (mult != 1f)
         {
-            Debug.Log($"[CharacterEquipment] Applied multiplier {mult} (note: WeaponController.NormalAttack doesn't support multiplier parameter)");
+            Debug.Log($"[CharacterEquipment] Damage multiplier {mult} from WeaponHandler (note: WeaponController.NormalAttack doesn't have multiplier parameter, multiplier not applied)");
         }
     }
 

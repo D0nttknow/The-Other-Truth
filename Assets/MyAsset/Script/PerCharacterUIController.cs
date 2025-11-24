@@ -138,7 +138,7 @@ public class PerCharacterUIController : MonoBehaviour
         }
         else
         {
-            // Fallback: try to call OnUse via reflection on weaponController or equipped weapon
+            // Fallback: try to call OnUse via reflection on weaponController
             var weaponController = playerEquipment.GetEquippedWeapon();
             if (weaponController != null)
             {
