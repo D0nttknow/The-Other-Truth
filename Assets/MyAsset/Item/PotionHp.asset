@@ -9,10 +9,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 05e14a30003f0b9408046fe9de8e1334, type: 3}
-  m_Name: Sword
-  m_EditorClassIdentifier: Assembly-CSharp::WeaponDefinition
-  weaponType: 0
-  damageMultiplier: 1.25
-  speedModPercent: 25
-  durationTurns: 1
+  m_Script: {fileID: 11500000, guid: f0f193ce28ff4fc47af1601ea713572e, type: 3}
+  m_Name: PotionHp
+  m_EditorClassIdentifier: Assembly-CSharp::ConsumableHeal
+  itemId: pot_hp
+  displayName: 
+  icon: {fileID: 0}
+  minRestore: 1
+  maxRestore: 3

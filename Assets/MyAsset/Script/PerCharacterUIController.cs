@@ -122,6 +122,9 @@ public class PerCharacterUIController : MonoBehaviour
         var target = tm.selectedMonster;
         if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected"); return; }
 
+        // Ensure weapon OnUse effects are applied before performing attack
+        TryInvokeWeaponOnUse();
+
         // Prefer using GoAttck animation if present
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
         if (goAI != null)
@@ -200,5 +203,41 @@ public class PerCharacterUIController : MonoBehaviour
         var p = t.GetProperty(name);
         if (p != null) { var val = p.GetValue(obj); return val is int ? (int)val : 0; }
         return 0;
+    }
+
+    // Try to invoke WeaponHandler.OnUse or fallback OnUse via reflection
+    void TryInvokeWeaponOnUse()
+    {
+        if (playerEquipment == null) return;
+        try
+        {
+            var wh = playerEquipment.gameObject.GetComponent<WeaponHandler>();
+            if (wh != null)
+            {
+                wh.OnUse();
+                Debug.Log($"[PerCharacterUI] WeaponHandler.OnUse invoked for {playerEquipment.gameObject.name}");
+                return;
+            }
+
+            // fallback: try call OnUse on equipped runtime controller (if any)
+            var wcObj = playerEquipment.GetEquippedWeapon();
+            if (wcObj != null)
+            {
+                var m = wcObj.GetType().GetMethod("OnUse");
+                if (m != null) { m.Invoke(wcObj, null); Debug.Log($"[PerCharacterUI] Called OnUse on equipped weapon object for {playerEquipment.gameObject.name}"); return; }
+            }
+
+            // try weaponController via CharacterEquipment's internal instance
+            var runtimeWC = playerEquipment.GetEquippedWeapon();
+            if (runtimeWC != null)
+            {
+                var m2 = runtimeWC.GetType().GetMethod("OnUse");
+                if (m2 != null) { try { m2.Invoke(runtimeWC, null); Debug.Log($"[PerCharacterUI] Called runtime weapon OnUse for {playerEquipment.gameObject.name}"); return; } catch { } }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[PerCharacterUI] Exception while invoking weapon OnUse: " + ex);
+        }
     }
 }

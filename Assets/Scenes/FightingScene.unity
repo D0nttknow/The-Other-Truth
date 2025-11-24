@@ -1009,6 +1009,56 @@ RectTransform:
   m_AnchoredPosition: {x: 400, y: -75}
   m_SizeDelta: {x: 400, y: 180}
   m_Pivot: {x: 0, y: 1}
+--- !u!1 &512471561
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 512471563}
+  - component: {fileID: 512471562}
+  m_Layer: 0
+  m_Name: Inventory
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &512471562
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 512471561}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ab46ccc3fad96a84384a429224ec3799, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InventoryManager
+  itemDatabase:
+  - {fileID: 11400000, guid: 16aa247c8975a2d4eb9c5d9ccae25e1a, type: 2}
+  - {fileID: 11400000, guid: b2f600b892a8f3d4a867ab6f2a330a1e, type: 2}
+  - {fileID: 11400000, guid: 4d7f591f62a89a34bafbf44e9119191b, type: 2}
+  - {fileID: 11400000, guid: c8340eb825146664ab27a6ef57795d2f, type: 2}
+  items: []
+--- !u!4 &512471563
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 512471561}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 372.88562, y: 197.35292, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &519420028
 GameObject:
   m_ObjectHideFlags: 0
@@ -3941,6 +3991,8 @@ GameObject:
   - component: {fileID: 1373171030}
   - component: {fileID: 1373171031}
   - component: {fileID: 1373171032}
+  - component: {fileID: 1373171033}
+  - component: {fileID: 1373171034}
   m_Layer: 0
   m_Name: Main Cahracter
   m_TagString: Untagged
@@ -4165,6 +4217,43 @@ MonoBehaviour:
   - {fileID: 11400000, guid: e268fc27086c93a42903bb2a0e901abb, type: 2}
   - {fileID: 11400000, guid: 0c465912008933848995b966a210abbe, type: 2}
   currentWeaponItem: {fileID: 11400000, guid: e268fc27086c93a42903bb2a0e901abb, type: 2}
+--- !u!114 &1373171033
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1373171021}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c02a3391e2a39b34d87a5199ebd703d1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PlayerLevel
+  Level: 1
+  MaxLevel: 20
+  CurrentExp: 0
+  BaseExpToNext: 100
+  ExpGrowth: 1.15
+  PointsPerLevel: 1
+  autoAllocate: 0
+  Priorities:
+  - hp
+  - atk
+  - def
+  AvailableStatPoints: 0
+--- !u!114 &1373171034
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1373171021}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: cd037e58191fd294ab7188fa62b8be5e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponHandler
+  currentWeapon: {fileID: 0}
 --- !u!1 &1374982070
 GameObject:
   m_ObjectHideFlags: 0
@@ -5532,6 +5621,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 24a2d68187fae1442abac25dd086903a, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::TurnManager
+  poolOfConsumables: []
   characterInfoPanel: {fileID: 2096792444}
   roundText: {fileID: 0}
   roundNumber: 1
@@ -6599,3 +6689,4 @@ SceneRoots:
   - {fileID: 1225577596}
   - {fileID: 827161128}
   - {fileID: 76577946}
+  - {fileID: 512471563}

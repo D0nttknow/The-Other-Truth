@@ -10,9 +10,9 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 05e14a30003f0b9408046fe9de8e1334, type: 3}
-  m_Name: Sword
+  m_Name: Hammer
   m_EditorClassIdentifier: Assembly-CSharp::WeaponDefinition
-  weaponType: 0
-  damageMultiplier: 1.25
-  speedModPercent: 25
+  weaponType: 1
+  damageMultiplier: 2.25
+  speedModPercent: -25
   durationTurns: 1

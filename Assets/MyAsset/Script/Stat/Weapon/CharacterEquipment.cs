@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 /// <summary>
@@ -14,6 +15,7 @@ using UnityEngine;
 /// - Added helper methods: GetEquippedWeapon(), AddOwnedWeapon(), RemoveOwnedWeapon(), EquipById(), EquipAtIndex().
 /// - Improved SwapToNextWeapon() safety when current item is null or not found in ownedWeapons.
 /// - Ensured instantiated weapon instance has localScale=Vector3.one to avoid scale issues.
+/// - Added robust UseSkill(IEnumerable) implementation and OnTurnStart() for compatibility.
 /// </summary>
 [DisallowMultipleComponent]
 public class CharacterEquipment : MonoBehaviour
@@ -50,10 +52,6 @@ public class CharacterEquipment : MonoBehaviour
         // Uncomment the next line if you want auto-equip on Start when ownedWeapons has items:
         // if (currentWeaponItem == null && ownedWeapons != null && ownedWeapons.Count > 0) Equip(ownedWeapons[0]);
     }
-
-    // NOTE: Removed Update() input polling to avoid conflicts with Unity's new Input System.
-    // Input should be handled by a centralized input handler (PlayerInputHandler or UI buttons)
-    // which then calls SwapToNextWeapon(), DoNormalAttack(), UseSkill(), etc.
 
     /// <summary>
     /// Equip a specific WeaponItem (instantiates visual prefab or creates empty holder).
@@ -138,21 +136,43 @@ public class CharacterEquipment : MonoBehaviour
     // helper used by input/ability system to call normal attack
     public void DoNormalAttack(GameObject target)
     {
-        if (weaponController != null) weaponController.NormalAttack(target);
-        else Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weapon equipped.");
-    }
+        float mult = 1f;
+        var wh = GetComponent<WeaponHandler>();
+        if (wh != null) mult = wh.CurrentDamageMultiplier;
 
-    // helper to call skill; targets provided by targeting system / TurnManager
-    public void UseSkill(IEnumerable<GameObject> targets)
-    {
-        if (weaponController != null) weaponController.UseSkill(targets);
-        else Debug.LogWarning("[CharacterEquipment] UseSkill: no weapon equipped.");
-    }
+        if (weaponController != null)
+        {
+            // Try NormalAttack(GameObject, float)
+            var m = weaponController.GetType().GetMethod("NormalAttack", new System.Type[] { typeof(GameObject), typeof(float) });
+            if (m != null)
+            {
+                try
+                {
+                    m.Invoke(weaponController, new object[] { target, mult });
+                    Debug.Log($"[CharacterEquipment] Invoked NormalAttack with multiplier {mult} on {gameObject.name}");
+                    return;
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning("[CharacterEquipment] Invoke NormalAttack(GameObject,float) failed: " + ex);
+                }
+            }
 
-    // Called by TurnManager to tick per-turn state (cooldowns)
-    public void OnTurnStart()
-    {
-        if (weaponController != null) weaponController.OnTurnStart();
+            // fallback to NormalAttack(GameObject)
+            try
+            {
+                weaponController.NormalAttack(target);
+                Debug.Log($"[CharacterEquipment] Invoked NormalAttack without multiplier (applied mult={mult}) on {gameObject.name}");
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("[CharacterEquipment] weaponController.NormalAttack threw: " + ex);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[CharacterEquipment] DoNormalAttack: no weaponController.");
+        }
     }
 
     // Public helpers / API ------------------------------------------------
@@ -221,5 +241,83 @@ public class CharacterEquipment : MonoBehaviour
         if (item == null || ownedWeapons == null) return;
         if (ownedWeapons.Contains(item)) ownedWeapons.Remove(item);
         if (currentWeaponItem == item) Unequip();
+    }
+
+    // UseSkill: provide overloads for List<GameObject>, array and IEnumerable
+    // Implement core behavior in the IEnumerable variant; other overloads forward to it.
+    public void UseSkill(IEnumerable<GameObject> targetsEnumerable)
+    {
+        if (targetsEnumerable == null) return;
+
+        // Normalize to a list to support callers that expect indexing etc.
+        var targetsList = targetsEnumerable as List<GameObject> ?? targetsEnumerable.ToList();
+        if (targetsList.Count == 0) return;
+
+        // Try to call weaponController.UseSkill with the most suitable signature
+        try
+        {
+            if (weaponController != null)
+            {
+                // Prefer signature accepting List<GameObject>
+                var mList = weaponController.GetType().GetMethod("UseSkill", new Type[] { typeof(List<GameObject>) });
+                if (mList != null)
+                {
+                    mList.Invoke(weaponController, new object[] { targetsList });
+                    return;
+                }
+
+                // Else try IEnumerable<GameObject>
+                var mEnum = weaponController.GetType().GetMethod("UseSkill", new Type[] { typeof(IEnumerable<GameObject>) });
+                if (mEnum != null)
+                {
+                    mEnum.Invoke(weaponController, new object[] { targetsList });
+                    return;
+                }
+
+                // Else try GameObject[]
+                var mArr = weaponController.GetType().GetMethod("UseSkill", new Type[] { typeof(GameObject[]) });
+                if (mArr != null)
+                {
+                    mArr.Invoke(weaponController, new object[] { targetsList.ToArray() });
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[CharacterEquipment] weaponController.UseSkill invoke failed: " + ex);
+        }
+
+        // Fallback: nothing to do but log
+        Debug.LogWarning("[CharacterEquipment] UseSkill: no suitable implementation on WeaponController.");
+    }
+
+    // Keep a simple List overload for callers that pass List<T>
+    public void UseSkill(List<GameObject> targets)
+    {
+        UseSkill((IEnumerable<GameObject>)targets);
+    }
+
+    // Keep array overload
+    public void UseSkill(GameObject[] targets)
+    {
+        UseSkill((IEnumerable<GameObject>)targets);
+    }
+
+    // Ensure OnTurnStart exists so TurnManager can call it
+    public void OnTurnStart()
+    {
+        try
+        {
+            if (weaponController != null)
+            {
+                var m = weaponController.GetType().GetMethod("OnTurnStart");
+                if (m != null) { m.Invoke(weaponController, null); return; }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[CharacterEquipment] OnTurnStart failed: " + ex);
+        }
     }
 }

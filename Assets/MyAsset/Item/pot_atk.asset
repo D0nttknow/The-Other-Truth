@@ -9,10 +9,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 05e14a30003f0b9408046fe9de8e1334, type: 3}
-  m_Name: Sword
-  m_EditorClassIdentifier: Assembly-CSharp::WeaponDefinition
-  weaponType: 0
-  damageMultiplier: 1.25
-  speedModPercent: 25
-  durationTurns: 1
+  m_Script: {fileID: 11500000, guid: 44e35c20f4dd43b46861ee6f15d67508, type: 3}
+  m_Name: pot_atk
+  m_EditorClassIdentifier: Assembly-CSharp::ConsumableAtk
+  itemId: pot_atk
+  displayName: 
+  icon: {fileID: 0}
+  minAdd: 1
+  maxAdd: 3
