@@ -122,6 +122,42 @@ public class PerCharacterUIController : MonoBehaviour
         var target = tm.selectedMonster;
         if (target == null) { Debug.LogWarning("[PerCharacterUI] No target selected"); return; }
 
+        // Call WeaponHandler.OnUse() before attacking (if present on playerEquipment GameObject)
+        var wh = playerEquipment.gameObject.GetComponent<WeaponHandler>();
+        if (wh != null)
+        {
+            try
+            {
+                wh.OnUse();
+                Debug.Log($"[PerCharacterUI] WeaponHandler.OnUse() invoked on {playerEquipment.gameObject.name}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[PerCharacterUI] Exception calling WeaponHandler.OnUse(): {ex}");
+            }
+        }
+        else
+        {
+            // Fallback: try to call OnUse via reflection on weaponController
+            var weaponController = playerEquipment.GetEquippedWeapon();
+            if (weaponController != null)
+            {
+                var onUseMethod = weaponController.GetType().GetMethod("OnUse", Type.EmptyTypes);
+                if (onUseMethod != null)
+                {
+                    try
+                    {
+                        onUseMethod.Invoke(weaponController, null);
+                        Debug.Log($"[PerCharacterUI] OnUse() invoked via reflection on weaponController");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[PerCharacterUI] Exception calling OnUse via reflection: {ex}");
+                    }
+                }
+            }
+        }
+
         // Prefer using GoAttck animation if present
         var goAI = playerEquipment.gameObject.GetComponent<GoAttck>();
         if (goAI != null)

@@ -2,48 +2,69 @@ using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
-/// ÊÑè§ÊÁÒªÔ¡¾ÃÃ¤ (non-player) ãËéâ¨ÁµÕÍÑµâ¹ÁÑµÔàÁ×èÍà»ç¹à·ÔÃì¹¢Í§¾Ç¡à¢Ò
-/// - µÔ´º¹ TurnBaseSystem ËÃ×Í GameObject ·Õèà»ç¹ PartyManager áÅĞàÃÕÂ¡ OnBattlerTurnStart(currentBattler) ¨Ò¡ TurnBaseSystem
-/// - ¶éÒ autoAllocateOnLevel = true ¨ĞàÃÕÂ¡ AutoAllocatePoints º¹ PlayerLevel àÁ×èÍàÅàÇÅÍÑ¾ (¶éÒµÔ´ÍÂÙèº¹¤¹ æ ¹Ñé¹)
+/// ï¿½ï¿½ï¿½ï¿½ï¿½ÒªÔ¡ï¿½ï¿½Ã¤ (non-player) ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñµï¿½ï¿½Ñµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ì¹¢Í§ï¿½Ç¡ï¿½ï¿½
+/// - ï¿½Ô´ï¿½ï¿½ TurnManager ï¿½ï¿½ï¿½ï¿½ GameObject ï¿½ï¿½ï¿½ï¿½ï¿½ PartyManager ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¡ OnBattlerTurnStart(currentBattler) ï¿½Ò¡ TurnManager
+/// - ï¿½ï¿½ï¿½ autoAllocateOnLevel = true ï¿½ï¿½ï¿½ï¿½ï¿½Â¡ AutoAllocatePoints ï¿½ï¿½ PlayerLevel ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¾ (ï¿½ï¿½ÒµÔ´ï¿½ï¿½ï¿½èº¹ï¿½ï¿½ ï¿½ ï¿½ï¿½ï¿½)
+///
+/// WIRING NOTES:
+/// - Attach this component to the TurnManager GameObject (or a dedicated manager object).
+/// - TurnManager should call OnBattlerTurnStart(CurrentBattlerObject) from its StartTurn() method for AI-controlled characters.
+/// - Ensure turnManager reference is set (will auto-assign from TurnManager.Instance if null).
 /// </summary>
 public class PartyAutoAttack : MonoBehaviour
 {
     public bool autoAttackEnabled = true;
     public bool autoAllocateOnLevel = true;
 
-    public TurnBaseSystem turnManager;
+    public TurnManager turnManager;
 
     void Awake()
     {
-        if (turnManager == null) turnManager = TurnBaseSystem.Instance;
+        if (turnManager == null) 
+        {
+            turnManager = TurnManager.Instance;
+            if (turnManager != null)
+            {
+                Debug.Log("[PartyAutoAttack] turnManager auto-assigned to TurnManager.Instance");
+            }
+        }
     }
 
     /// <summary>
-    /// àÃÕÂ¡àÁ×èÍàÃÔèÁà·ÔÃì¹¢Í§ battler (TurnBaseSystem ¤ÇÃàÃÕÂ¡)
+    /// ï¿½ï¿½ï¿½Â¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ì¹¢Í§ battler (TurnManager ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¡)
     /// </summary>
     public void OnBattlerTurnStart(GameObject battler)
     {
         if (!autoAttackEnabled || battler == null) return;
 
+        // Safety check: ensure turnManager is available
+        if (turnManager == null)
+        {
+            turnManager = TurnManager.Instance;
+            if (turnManager == null)
+            {
+                Debug.LogWarning("[PartyAutoAttack] turnManager is null and TurnManager.Instance not found.");
+                return;
+            }
+        }
+
         var ce = battler.GetComponent<CharacterEquipment>();
         if (ce == null) return;
 
-        // ¶éÒÁÕ PlayerLevel áÊ´§ÇèÒà»ç¹¼ÙéàÅè¹ËÅÑ¡ ãËé¢éÒÁ (ËÃ×Íà»ÅÕèÂ¹µÒÁµéÍ§¡ÒÃ)
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ PlayerLevel ï¿½Ê´ï¿½ï¿½ï¿½ï¿½ï¿½ç¹¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñ¡ ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ (ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¹ï¿½ï¿½ï¿½ï¿½ï¿½Í§ï¿½ï¿½ï¿½)
         var pl = battler.GetComponent<PlayerLevel>();
         if (pl != null) return;
 
-        // ËÒà»éÒÈÑµÃÙ·ÕèÂÑ§ÁÕ hp > 0
+        // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ñµï¿½Ù·ï¿½ï¿½ï¿½Ñ§ï¿½ï¿½ hp > 0
         GameObject target = FindFirstMonster();
         if (target == null) return;
 
         Debug.LogFormat("[PartyAutoAttack] {0} auto-attacking {1}", battler.name, target.name);
         try
         {
-            // àÃÕÂ¡ DoNormalAttack ¢Í§ CharacterEquipment (assumed exist in project)
-            ce.DoNormalAttack(target, () =>
-            {
-                Debug.LogFormat("[PartyAutoAttack] {0} attack complete", battler.name);
-            });
+            // ï¿½ï¿½ï¿½Â¡ DoNormalAttack ï¿½Í§ CharacterEquipment (assumed exist in project)
+            ce.DoNormalAttack(target);
+            Debug.LogFormat("[PartyAutoAttack] {0} attack complete", battler.name);
         }
         catch (System.Exception ex)
         {
@@ -64,8 +85,8 @@ public class PartyAutoAttack : MonoBehaviour
     }
 
     /// <summary>
-    /// ËÒ¡µéÍ§¡ÒÃãËé PartyAutoAttack ¨Ñ´¡ÒÃ auto allocate ÊÓËÃÑº PlayerLevel ¢Í§µÑÇÅĞ¤Ãã´æ
-    /// ãËéàÃÕÂ¡àÁ·Í´¹Õé (àªè¹ subscribe ¡Ñº PlayerLevel.OnLevelUp)
+    /// ï¿½Ò¡ï¿½ï¿½Í§ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ PartyAutoAttack ï¿½Ñ´ï¿½ï¿½ï¿½ auto allocate ï¿½ï¿½ï¿½ï¿½Ñº PlayerLevel ï¿½Í§ï¿½ï¿½ï¿½ï¿½Ğ¤ï¿½ï¿½ï¿½
+    /// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â¡ï¿½ï¿½ï¿½Í´ï¿½ï¿½ï¿½ (ï¿½ï¿½ subscribe ï¿½Ñº PlayerLevel.OnLevelUp)
     /// </summary>
     public void OnCharacterLeveled(PlayerLevel pl)
     {
