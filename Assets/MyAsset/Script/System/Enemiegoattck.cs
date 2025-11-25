@@ -12,8 +12,8 @@ public class Enemiegoattck : MonoBehaviour
     {
         if (monster == null)
         {
-            // default to this component's transform if not explicitly assigned
-            monster = this.transform;
+            Debug.LogError("Enemiegoattck: monster is null!");
+            return;
         }
         startPosition = monster.position;
     }

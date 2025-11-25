@@ -3,33 +3,19 @@ using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// InventoryUI (ปรับปรุง)
-/// - แสดง/ซ่อน panel ด้วย Open/Close/Toggle
-/// - จะเรียก RefreshUI เมื่อเปิดเพื่อแสดงข้อมูลล่าสุด
+/// InventoryUI - updated to use InventoryManager entries (ItemBase) directly
 /// </summary>
 public class InventoryUI : MonoBehaviour
 {
     public RectTransform contentParent;
     public GameObject slotPrefab;
-    public ItemDefinition[] itemDatabase; // lookup
 
-    Dictionary<string, ItemDefinition> lookup = new Dictionary<string, ItemDefinition>();
     List<GameObject> spawnedSlots = new List<GameObject>();
 
-    bool isOpen = true; // ถ้าต้องการให้เริ่มปิด ให้ตั้งเป็น false
+    bool isOpen = true;
 
     void Awake()
     {
-        // build lookup
-        lookup.Clear();
-        if (itemDatabase != null)
-        {
-            foreach (var it in itemDatabase)
-                if (it != null && !string.IsNullOrEmpty(it.id))
-                    lookup[it.id] = it;
-        }
-
-        // start closed by default (ถ้าต้องการให้เปิดตอนเริ่ม ให้เปลี่ยนเป็น true)
         gameObject.SetActive(isOpen);
     }
 
@@ -38,7 +24,6 @@ public class InventoryUI : MonoBehaviour
         if (InventoryManager.Instance != null)
             InventoryManager.Instance.OnInventoryChanged += RefreshUI;
 
-        // If starting open, refresh immediately
         if (isOpen) RefreshUI();
     }
 
@@ -69,10 +54,8 @@ public class InventoryUI : MonoBehaviour
 
     public void RefreshUI()
     {
-        // only refresh if the panel is visible (optional)
         if (!gameObject.activeSelf) return;
 
-        // clear existing slots
         foreach (var go in spawnedSlots) if (go != null) Destroy(go);
         spawnedSlots.Clear();
 
@@ -80,13 +63,12 @@ public class InventoryUI : MonoBehaviour
 
         foreach (var e in InventoryManager.Instance.entries)
         {
-            if (e == null || string.IsNullOrEmpty(e.id)) continue;
+            if (e == null || e.item == null) continue;
 
             var go = Instantiate(slotPrefab, contentParent);
             var slot = go.GetComponent<InventorySlotUI>();
-            Sprite icon = null;
-            if (lookup.TryGetValue(e.id, out var def)) icon = def.icon;
-            slot.Setup(e.id, icon, e.count);
+            Sprite icon = e.item.icon;
+            slot.Setup(e.item.itemId, icon, e.count);
             spawnedSlots.Add(go);
         }
     }

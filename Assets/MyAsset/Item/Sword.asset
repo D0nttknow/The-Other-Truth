@@ -9,13 +9,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 5012f0394280b764d909b19e0eb3247e, type: 3}
+  m_Script: {fileID: 11500000, guid: 05e14a30003f0b9408046fe9de8e1334, type: 3}
   m_Name: Sword
-  m_EditorClassIdentifier: Assembly-CSharp::ItemDefinition
-  id: Potion
-  displayName: Potion
-  description: 
-  icon: {fileID: -3702259769212692135, guid: 42f4e6d7128a50a4599f7c2a006563be, type: 3}
-  stackable: 1
-  maxStack: 99
-  baseValue: 0
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponDefinition
+  weaponType: 0
+  damageMultiplier: 1.25
+  speedModPercent: 25
+  durationTurns: 1

@@ -2,13 +2,15 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
 /// <summary>
-/// TurnBaseSystem (merged TurnManager logic)
-/// Consolidated from previous TurnManager implementation. Provides the same public API
-/// via TurnBaseSystem.Instance and keeps a small compatibility subclass TurnManager : TurnBaseSystem.
+/// TurnBaseSystem - full, self-contained implementation.
+/// - Includes resilient BuildBattlerListsFromCharacterObjects that can read project-specific stat components via reflection.
+/// - Exposes public methods other scripts call (RemoveBattler, RecordEnemyDefeated, OnMonsterSelected, OnPlayerReturned, EndTurn, etc.).
+/// - Uses reflection to call WeaponUIController.RefreshUI where needed.
 /// </summary>
 public class TurnBaseSystem : MonoBehaviour
 {
@@ -17,15 +19,21 @@ public class TurnBaseSystem : MonoBehaviour
     void Awake() => Instance = this;
     void OnDestroy() { if (Instance == this) Instance = null; }
 
+    [Header("Optional: assign global Weapon UI Controller (single shared UI)")]
+    [Tooltip("If assigned, TurnBaseSystem will set globalWeaponUI.playerEquipment when a player battler's turn begins.")]
+    public WeaponUIController globalWeaponUI;
+
+    [Header("Loot / Consumables (assign in Inspector)")]
+    public List<ItemBase> poolOfConsumables = new List<ItemBase>();
+
     [Header("UI References")]
-    [Tooltip("Optional: assign the CharacterInfoPanel here. If left empty, TurnBaseSystem will try to FindObjectOfType<CharacterInfoPanel>() in Start.")]
     public CharacterInfoPanel characterInfoPanel;
 
     [Header("Round UI")]
-    [Tooltip("Optional UI Text to show current round number on screen")]
     public Text roundText;
     [HideInInspector] public int roundNumber = 1;
 
+    // selected target
     public GameObject selectedMonster = null;
 
     [Header("Runtime lists")]
@@ -45,15 +53,10 @@ public class TurnBaseSystem : MonoBehaviour
     public List<GameObject> persistentPlayerUIPanels;
 
     [Header("Runtime references")]
-    [Tooltip("Canvas to parent persistent panels under")]
     public Canvas defaultCanvas;
 
     [Header("Behavior")]
-    [Tooltip("If enabled, filter persistent panels to participants during actions")]
     public bool filterPersistentToParticipants = false;
-
-    [Tooltip("If true, TurnBaseSystem will create and manage healthbars. Other scripts (AttachHealthBar / Stat) should skip creating their own healthbars.")]
-    public bool manageHealthbars = true;
 
     private Dictionary<GameObject, GameObject> playerToPanel = new Dictionary<GameObject, GameObject>();
     private Dictionary<GameObject, GameObject> persistentPlayerToPanel = new Dictionary<GameObject, GameObject>();
@@ -70,29 +73,12 @@ public class TurnBaseSystem : MonoBehaviour
     public GameObject perCharacterPanelPrefab;
     private Dictionary<GameObject, GameObject> battlerToPanel = new Dictionary<GameObject, GameObject>();
 
-    // internal coroutine handles
-    private Coroutine _delayedHealthbarCoroutine = null;
-
-    // --- Selection debounce / dedupe helpers (prevent duplicate selection events) ---
-    private float _lastSelectTime = -10f;
-    private const float _selectDebounceSeconds = 0.12f;
-
-    // EndTurn debounce / lock
-    private float _lastEndTurnTime = -10f;
-    private const float _endTurnDebounceSeconds = 0.12f;
-    private bool _endTurnLock = false;
-
-    // --- NEW: player action guard ---
-    // When true we are waiting for player's movement/skill/return sequence to finish.
-    // This prevents EndTurn/StartTurn from advancing while an in-progress action has not completed.
-    private bool _playerActionInProgress = false;
-
+    // Public helper properties
     public GameObject CurrentBattlerObject
     {
         get
         {
-            if (turnIndex >= 0 && turnIndex < battlerObjects.Count)
-                return battlerObjects[turnIndex];
+            if (turnIndex >= 0 && turnIndex < battlerObjects.Count) return battlerObjects[turnIndex];
             return null;
         }
     }
@@ -105,87 +91,26 @@ public class TurnBaseSystem : MonoBehaviour
 
     void Start()
     {
-        Debug.Log("[TurnBaseSystem] START on GameObject='" + gameObject.name + "' characterObjects != null? "
-                  + (characterObjects != null) + " count=" + (characterObjects != null ? characterObjects.Count : -1)
-                  + " battlerObjects != null? " + (battlerObjects != null) + " count=" + (battlerObjects != null ? battlerObjects.Count : -1));
-
-        // Auto-populate characterObjects if none assigned
-        if ((characterObjects == null || characterObjects.Count == 0))
-        {
-            var foundList = new List<GameObject>();
-            var all = FindObjectsOfType<MonoBehaviour>(true);
-            foreach (var mb in all)
-            {
-                if (mb == null) continue;
-                if (mb is ICharacterStat || mb is IMonsterStat)
-                {
-                    if (!foundList.Contains(mb.gameObject))
-                        foundList.Add(mb.gameObject);
-                }
-            }
-
-            // deterministic ordering so mapping is stable across runs
-            if (foundList.Count > 1)
-            {
-                foundList = foundList.OrderBy(g => g.name, StringComparer.Ordinal)
-                                     .ThenBy(g => g.GetInstanceID())
-                                     .ToList();
-            }
-
-            if (foundList.Count > 0)
-            {
-                characterObjects = foundList;
-                Debug.Log("[TurnBaseSystem] Auto-populated characterObjects count=" + characterObjects.Count);
-            }
-            else
-            {
-                Debug.Log("[TurnBaseSystem] No ICharacterStat/IMonsterStat found for auto-populate.");
-            }
-        }
-
-        if (characterObjects == null || characterObjects.Count == 0)
-            Debug.LogWarning("[TurnBaseSystem] characterObjects is null or empty at Start. Make sure to populate it in the Inspector or before Start.");
+        Instance = this;
 
         BuildBattlerListsFromCharacterObjects();
 
         if (defaultCanvas == null)
         {
             defaultCanvas = FindObjectOfType<Canvas>(true);
-            if (defaultCanvas != null) Debug.Log("[TurnBaseSystem] defaultCanvas auto-assigned to '" + defaultCanvas.name + "'");
+            if (defaultCanvas != null) Debug.Log($"[TurnBaseSystem] defaultCanvas auto-assigned to '{defaultCanvas.name}'");
         }
 
         if (characterInfoPanel == null)
         {
             characterInfoPanel = FindObjectOfType<CharacterInfoPanel>();
-            if (characterInfoPanel != null) Debug.Log("[TurnBaseSystem] characterInfoPanel auto-assigned to '" + characterInfoPanel.gameObject.name + "'");
+            if (characterInfoPanel != null) Debug.Log($"[TurnBaseSystem] characterInfoPanel auto-assigned to '{characterInfoPanel.gameObject.name}'");
         }
 
-        // Create per-character panels based on battlerObjects (source of truth)
-        CreateOrAssignPerCharacterPanels();
-
-        // Create healthbars per battlerObject to keep mapping consistent if this manager is responsible
-        if (manageHealthbars && HealthBarManager.Instance != null)
+        if (HealthBarManager.Instance != null)
         {
-            if (battlerObjects != null && battlerObjects.Count > 0)
-            {
-                for (int i = 0; i < battlerObjects.Count; i++)
-                {
-                    var go = battlerObjects[i];
-                    if (go == null) continue;
-                    HealthBarManager.Instance.CreateFor(go, go.transform);
-                    Debug.Log("[TurnBaseSystem] HealthBarManager.CreateFor called for index=" + i + " go=" + go.name + " id=" + go.GetInstanceID());
-                }
-            }
-            else
-            {
-                if (_delayedHealthbarCoroutine != null) StopCoroutine(_delayedHealthbarCoroutine);
-                _delayedHealthbarCoroutine = StartCoroutine(DelayedHealthbarCreate(0.1f, 10));
-                Debug.Log("[TurnBaseSystem] Scheduled delayed per-battler healthbar creation (battlerObjects empty at Start).");
-            }
-        }
-        else if (!manageHealthbars)
-        {
-            Debug.Log("[TurnBaseSystem] manageHealthbars is false - skipping healthbar creation here. Other scripts should create healthbars.");
+            HealthBarManager.Instance.CreateForAllFromTurnManager();
+            Debug.Log("[TurnBaseSystem] Requested HealthBarManager to CreateForAllFromTurnManager()");
         }
 
         UpdatePlayerPanelMapping();
@@ -193,14 +118,18 @@ public class TurnBaseSystem : MonoBehaviour
         RefreshTurnOrderUI();
         UpdateRoundUI();
 
+        CreateOrAssignPerCharacterPanels();
+
         StartTurn();
     }
 
+    // ----------------------
+    // Battler discovery
+    // ----------------------
     void BuildBattlerListsFromCharacterObjects()
     {
         battlers.Clear();
         battlerObjects.Clear();
-
         if (characterObjects == null) return;
 
         var pairList = new List<(Battler battler, GameObject go)>();
@@ -209,205 +138,222 @@ public class TurnBaseSystem : MonoBehaviour
         {
             if (go == null) continue;
 
-            var playerStat = go.GetComponent<ICharacterStat>();
-            if (playerStat != null)
+            // 1) Preferred: objects implementing ICharacterStat
+            var iChar = go.GetComponent<ICharacterStat>();
+            if (iChar != null)
             {
-                string name = SafeGet(() => playerStat.Name, go.name);
+                string name = SafeGet(() => iChar.Name, go.name);
+                int hp = SafeGet(() => iChar.hp, 0);
+                int atk = SafeGet(() => iChar.atk, 0);
+                int def = SafeGet(() => iChar.def, 0);
+                int spd = SafeGet(() => iChar.speed, 0);
 
-                int hp = SafeGet(() => playerStat.hp, 0);
-                int atk = SafeGet(() => playerStat.atk, 0);
-                int def = SafeGet(() => playerStat.def, 0);
-                int spd = SafeGet(() => playerStat.speed, 0);
+                var wh = go.GetComponent<WeaponHandler>();
+                if (wh != null && wh.CurrentSpeedModPercent != 0f)
+                    spd = Mathf.RoundToInt(spd * (1f + wh.CurrentSpeedModPercent / 100f));
 
                 var b = new Battler(string.IsNullOrEmpty(name) ? go.name : name, hp, atk, def, spd, false);
                 pairList.Add((b, go));
                 continue;
             }
 
-            var monsterStat = go.GetComponent<IMonsterStat>();
-            if (monsterStat != null)
+            // 2) Preferred monster: IMonsterStat
+            var iMon = go.GetComponent<IMonsterStat>();
+            if (iMon != null)
             {
-                string name = SafeGet(() => monsterStat.monsterName, go.name);
-
-                int hp = SafeGet(() => monsterStat.monsterHp, 0);
-                int atk = SafeGet(() => monsterStat.monsterAtk, 0);
-                int def = SafeGet(() => monsterStat.monsterDef, 0);
-                int spd = SafeGet(() => monsterStat.monsterSpeed, 0);
-
+                string name = SafeGet(() => iMon.monsterName, go.name);
+                int hp = SafeGet(() => iMon.monsterHp, 0);
+                int atk = SafeGet(() => iMon.monsterAtk, 0);
+                int def = SafeGet(() => iMon.monsterDef, 0);
+                int spd = SafeGet(() => iMon.monsterSpeed, 0);
                 var b = new Battler(string.IsNullOrEmpty(name) ? go.name : name, hp, atk, def, spd, true);
                 pairList.Add((b, go));
                 continue;
             }
 
-            Debug.LogWarning("[TurnBaseSystem] GameObject '" + go.name + "' has no ICharacterStat or IMonsterStat - skipped when building turn order.");
+            // 3) Fallback: inspect other components on the GameObject with reflection heuristics
+            bool added = false;
+            var comps = go.GetComponents<Component>();
+            foreach (var comp in comps)
+            {
+                if (comp == null) continue;
+                var t = comp.GetType();
+
+                // skip Unity engine built-in components to avoid false positives
+                if (t.Namespace != null && t.Namespace.StartsWith("UnityEngine")) continue;
+
+                if (TryExtractStatsFromComponent(comp, out string extractedName, out int hp, out int atk, out int def, out int spd))
+                {
+                    string tn = t.Name.ToLowerInvariant();
+                    bool isMonster = (tn.Contains("enemy") || tn.Contains("monster") || tn.Contains("enemie") || tn.Contains("mob"));
+
+                    var b = new Battler(string.IsNullOrEmpty(extractedName) ? go.name : extractedName, hp, atk, def, spd, isMonster);
+                    pairList.Add((b, go));
+                    added = true;
+                    break;
+                }
+            }
+
+            if (!added)
+            {
+                Debug.LogWarning($"[TurnBaseSystem] GameObject '{go.name}' has no ICharacterStat/IMonsterStat and no readable stat component - skipped when building turn order.");
+            }
         }
 
-        // deterministic sort: primary = speed desc, secondary = name, tertiary = instance id
-        pairList = pairList
-            .OrderByDescending(p => p.battler.speed)
-            .ThenBy(p => p.go.name, StringComparer.Ordinal)
-            .ThenBy(p => p.go.GetInstanceID())
-            .ToList();
-
+        // sort by speed descending and populate lists
+        pairList = pairList.OrderByDescending(p => p.battler.speed).ToList();
         foreach (var p in pairList)
         {
             battlers.Add(p.battler);
             battlerObjects.Add(p.go);
         }
 
-        // Debug listing for verification
-        Debug.Log("[TurnBaseSystem] BuildBattlerListsFromCharacterObjects result:");
-        for (int i = 0; i < battlers.Count; i++)
-        {
-            var goName = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].name : "null";
-            var id = i < battlerObjects.Count && battlerObjects[i] != null ? battlerObjects[i].GetInstanceID().ToString() : "-";
-            Debug.Log(" index=" + i + " battler=" + battlers[i].name + " go=" + goName + " id=" + id + " speed=" + battlers[i].speed);
-        }
-
         if (turnIndex < 0 || turnIndex >= battlers.Count) turnIndex = 0;
     }
 
+    // Try to extract stats using reflection heuristics. Returns true if at least one meaningful stat found (hp/atk/def/speed).
+    bool TryExtractStatsFromComponent(Component comp, out string name, out int hp, out int atk, out int def, out int speed)
+    {
+        name = comp?.gameObject?.name ?? "";
+        hp = atk = def = speed = 0;
+        if (comp == null) return false;
+
+        var t = comp.GetType();
+
+        // Try to read name-like property
+        var nameProp = t.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                    ?? t.GetProperty("name", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                    ?? t.GetProperty("DisplayName", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                    ?? t.GetProperty("displayName", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+        if (nameProp != null)
+        {
+            try { var v = nameProp.GetValue(comp); if (v != null) name = v.ToString(); } catch { }
+        }
+
+        // Helper: search by keywords, tries fields then properties, then substring match
+        Func<string[], int> findIntByKeywords = (keywords) =>
+        {
+            foreach (var kw in keywords)
+            {
+                // fields
+                var f = t.GetField(kw, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null)
+                {
+                    try
+                    {
+                        var val = f.GetValue(comp);
+                        if (val is int) return (int)val;
+                        if (val is float) return Mathf.RoundToInt((float)val);
+                        if (val is double) return Mathf.RoundToInt((float)(double)val);
+                    }
+                    catch { }
+                }
+                // properties
+                var p = t.GetProperty(kw, BindingFlags.IgnoreCase | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (p != null)
+                {
+                    try
+                    {
+                        var val = p.GetValue(comp);
+                        if (val is int) return (int)val;
+                        if (val is float) return Mathf.RoundToInt((float)val);
+                        if (val is double) return Mathf.RoundToInt((float)(double)val);
+                    }
+                    catch { }
+                }
+            }
+
+            // broader substring search on fields
+            foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                string n = f.Name.ToLowerInvariant();
+                foreach (var kw in keywords)
+                {
+                    if (n.Contains(kw.ToLowerInvariant()))
+                    {
+                        try
+                        {
+                            var val = f.GetValue(comp);
+                            if (val is int) return (int)val;
+                            if (val is float) return Mathf.RoundToInt((float)val);
+                            if (val is double) return Mathf.RoundToInt((float)(double)val);
+                        }
+                        catch { }
+                    }
+                }
+            }
+
+            // substring search on properties
+            foreach (var p in t.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                string n = p.Name.ToLowerInvariant();
+                foreach (var kw in keywords)
+                {
+                    if (n.Contains(kw.ToLowerInvariant()))
+                    {
+                        try
+                        {
+                            var val = p.GetValue(comp);
+                            if (val is int) return (int)val;
+                            if (val is float) return Mathf.RoundToInt((float)val);
+                            if (val is double) return Mathf.RoundToInt((float)(double)val);
+                        }
+                        catch { }
+                    }
+                }
+            }
+
+            return 0;
+        };
+
+        // Try several variants including project-specific names like Hunterhp etc.
+        hp = findIntByKeywords(new string[] { "hp", "health", "hunterhp", "currenthp", "hitpoints" });
+        atk = findIntByKeywords(new string[] { "atk", "attack", "damage", "hunteratk" });
+        def = findIntByKeywords(new string[] { "def", "defense", "armour", "hunterdef" });
+        speed = findIntByKeywords(new string[] { "speed", "spd", "hunterspeed" });
+
+        // Last resort: try to find any plausible hp-like field
+        if (hp == 0)
+        {
+            foreach (var f in t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                var n = f.Name.ToLowerInvariant();
+                if (n.Contains("hp") || n.Contains("health") || n.Contains("hit"))
+                {
+                    try
+                    {
+                        var v = f.GetValue(comp);
+                        if (v is int) { hp = (int)v; break; }
+                        if (v is float) { hp = Mathf.RoundToInt((float)v); break; }
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        return (hp > 0) || (atk > 0) || (def > 0) || (speed > 0);
+    }
+
+    // ----------------------------
+    // Core turn logic (StartTurn, EndTurn etc.)
+    // ----------------------------
     T SafeGet<T>(Func<T> getter, T fallback)
     {
         try { return getter(); }
         catch { return fallback; }
     }
 
-    // ---------------- Player strong attack flow ----------------
-    public void OnPlayerStrongAttack()
+    public void StartTurn()
     {
-        Debug.Log("[TurnBaseSystem] OnPlayerStrongAttack called");
-
-        if (selectedMonster == null)
+        // DEBUG: log battler lists for diagnosis
+        Debug.Log($"[TMDebug] StartTurn called. turnIndex={turnIndex} round={roundNumber} battlers={battlers.Count} battlerObjects={battlerObjects.Count}");
+        for (int i = 0; i < Math.Max(battlers.Count, battlerObjects.Count); i++)
         {
-            Debug.Log("[TurnBaseSystem] selectedMonster is null");
-            return;
+            string goName = (i < battlerObjects.Count && battlerObjects[i] != null) ? battlerObjects[i].name : "NULL";
+            string binfo = (i < battlers.Count && battlers[i] != null) ? $"hp={battlers[i].hp} isMonster={battlers[i].isMonster}" : "noBattler";
+            Debug.Log($"[TMDebug] idx={i} GO={goName} | {binfo}");
         }
 
-        if (turnIndex < 0 || turnIndex >= battlerObjects.Count)
-        {
-            Debug.Log("[TurnBaseSystem] invalid turnIndex " + turnIndex + " / battlerObjects.Count " + battlerObjects.Count);
-            return;
-        }
-
-        GameObject playerObj = battlerObjects[turnIndex];
-
-        // Build safe info strings to avoid embedded-quote escaping issues
-        string playerInfo = playerObj != null ? (playerObj.name + " id=" + playerObj.GetInstanceID()) : "null";
-        Debug.Log("[TurnBaseSystem] Current playerObj = " + playerInfo);
-
-        if (playerObj == null) return;
-
-        GoAttck playerAI = playerObj.GetComponent<GoAttck>();
-        Debug.Log("[TurnBaseSystem] playerObj has GoAttck? " + (playerAI != null));
-
-        GameObject monsterObj = selectedMonster;
-        string targetInfo = monsterObj != null ? (monsterObj.name + " id=" + monsterObj.GetInstanceID()) : "null";
-        Debug.Log("[TurnBaseSystem] selectedMonster = " + targetInfo);
-
-        if (playerAI != null && monsterObj != null)
-        {
-            ShowPanelsForParticipants(playerObj, monsterObj);
-
-            // Mark action in progress until ReturnToStart -> OnPlayerReturned
-            _playerActionInProgress = true;
-
-            // Pass the monsterObj as parameter and clear selection in callback after attack+return finishes
-            playerAI.StrongAttackMonster(monsterObj, () =>
-            {
-                bool returnedHandled = false;
-                try
-                {
-                    var ce = playerObj.GetComponent<CharacterEquipment>();
-                    var playerStat = playerObj.GetComponent<ICharacterStat>();
-
-                    if (ce != null)
-                    {
-                        var targets = new List<GameObject> { monsterObj };
-                        Debug.Log("[TurnBaseSystem] Applying skill via CharacterEquipment.UseSkill for " + playerObj.name);
-
-                        // Try to call UseSkill with callback if available
-                        var ceType = ce.GetType();
-                        var useWithCb = ceType.GetMethod("UseSkill", new Type[] { typeof(List<GameObject>), typeof(Action) });
-                        if (useWithCb != null)
-                        {
-                            useWithCb.Invoke(ce, new object[] { targets, new Action(() =>
-                            {
-                                selectedMonster = null;
-                                playerAI.ReturnToStart(() =>
-                                {
-                                    OnPlayerReturned();
-                                });
-                            })});
-                            returnedHandled = true;
-                        }
-                        else
-                        {
-                            // fallback: UseSkill(List<GameObject>)
-                            useWithCb = null;
-                            try { ce.UseSkill(new List<GameObject> { monsterObj }); }
-                            catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] CharacterEquipment.UseSkill (fallback) threw: " + ex); }
-                        }
-                    }
-                    else if (playerStat != null)
-                    {
-                        var ms = monsterObj.GetComponent<IMonsterStat>();
-                        if (ms != null)
-                        {
-                            Debug.Log("[TurnBaseSystem] Applying skill via ICharacterStat.StrongAttackMonster for " + playerObj.name);
-                            try { playerStat.StrongAttackMonster(ms); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] playerStat.StrongAttackMonster threw: " + ex); }
-                        }
-                        else Debug.LogWarning("[TurnBaseSystem] Monster has no IMonsterStat - cannot call StrongAttackMonster on playerStat");
-                    }
-                    else
-                    {
-                        Debug.LogWarning("[TurnBaseSystem] No CharacterEquipment/ICharacterStat to apply skill from " + playerObj.name);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogWarning("[TurnBaseSystem] Exception while applying skill in OnPlayerStrongAttack callback: " + ex);
-                }
-
-                // Default synchronous path: if no async branch handled return, clear selection and ReturnToStart -> OnPlayerReturned
-                if (!returnedHandled)
-                {
-                    selectedMonster = null;
-                    try
-                    {
-                        playerAI.ReturnToStart(() =>
-                        {
-                            OnPlayerReturned();
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogWarning("[TurnBaseSystem] Exception while returning to start in fallback: " + ex);
-                        _playerActionInProgress = false;
-                        EndTurn();
-                    }
-                }
-            });
-        }
-        else
-        {
-            if (playerAI == null) Debug.LogWarning("[TurnBaseSystem] Cannot perform StrongAttack: GoAttck component missing on playerObj");
-            if (monsterObj == null) Debug.LogWarning("[TurnBaseSystem] Cannot perform StrongAttack: selectedMonster is null");
-        }
-    }
-
-    public GameObject GetRandomAlivePlayer()
-    {
-        var alivePlayers = battlerObjects
-            .Where((obj, i) => obj != null && i < battlers.Count && !battlers[i].isMonster && battlers[i].hp > 0)
-            .Select(x => x)
-            .ToList();
-
-        return alivePlayers.Count > 0 ? alivePlayers[UnityEngine.Random.Range(0, alivePlayers.Count)] : null;
-    }
-
-    void StartTurn()
-    {
         int attempts = 0;
         int maxAttempts = Math.Max(1, Math.Max(1, battlers.Count));
 
@@ -427,89 +373,107 @@ public class TurnBaseSystem : MonoBehaviour
                 if (turnIndex >= battlers.Count) turnIndex = 0;
                 safetyCount++;
             }
-            if (battlerObjects.Count == 0 || turnIndex >= battlerObjects.Count || battlerObjects[turnIndex] == null) { Debug.Log("No battler left to take turn!"); HideAllPlayerUI(); return; }
 
+            if (battlerObjects.Count == 0 || turnIndex >= battlerObjects.Count || battlerObjects[turnIndex] == null)
+            {
+                Debug.Log("No battler left to take turn!");
+                HideAllPlayerUI();
+                return;
+            }
+
+            Debug.Log($"[TMDebug] Ticking status for index {turnIndex} (GO: {(turnIndex < battlerObjects.Count && battlerObjects[turnIndex] != null ? battlerObjects[turnIndex].name : "null")})");
             TryTickStatusForIndex(turnIndex);
             CleanUpDeadBattlers();
 
             if (battlers.Count == 0) { Debug.Log("Battle ended after status ticks!"); HideAllPlayerUI(); return; }
-
             if (turnIndex >= battlers.Count) turnIndex = 0;
-
             if (turnIndex >= battlerObjects.Count || battlerObjects[turnIndex] == null)
             {
                 turnIndex = (turnIndex + 1) % Math.Max(1, battlers.Count);
                 attempts++;
                 continue;
             }
-
             break;
         }
 
         if (battlers.Count == 0) { Debug.Log("No battlers available to start turn."); HideAllPlayerUI(); return; }
-
         if (turnIndex >= battlers.Count) turnIndex = 0;
         if (turnIndex >= battlerObjects.Count || battlerObjects[turnIndex] == null) { Debug.LogWarning("[TurnBaseSystem] No valid battler found after attempts."); HideAllPlayerUI(); return; }
 
-        // ---------------- HOTFIX: robust mapping battler -> GameObject ----------------
-        Battler current = null;
-        GameObject obj = null;
-
-        if (turnIndex >= 0 && turnIndex < battlers.Count)
-            current = battlers[turnIndex];
-
-        // Try direct index mapping first
-        if (current != null && turnIndex >= 0 && turnIndex < battlerObjects.Count && battlerObjects[turnIndex] != null)
-        {
-            obj = battlerObjects[turnIndex];
-
-            // sanity check: if battler.name != GameObject.name, attempt to find correct GameObject by name
-            if (!string.Equals(current.name, obj.name, StringComparison.Ordinal))
-            {
-                Debug.LogWarning("[TurnBaseSystem] Name mismatch at index " + turnIndex + ": battler='" + current.name + "' but battlerObjects[" + turnIndex + "]='" + obj.name + "'. Searching for matching GameObject.");
-                int foundIdx = battlerObjects.FindIndex(go => go != null && string.Equals(go.name, current.name, StringComparison.Ordinal));
-                if (foundIdx >= 0)
-                {
-                    obj = battlerObjects[foundIdx];
-                    Debug.LogWarning("[TurnBaseSystem] Remapped battler '" + current.name + "' -> battlerObjects[" + foundIdx + "] ('" + obj.name + "'). Updating turnIndex for consistency.");
-                    turnIndex = foundIdx;
-                }
-            }
-        }
-        else if (current != null)
-        {
-            // index out of range or null at index -> try to find matching go by name (best-effort)
-            int foundIdx = battlerObjects.FindIndex(go => go != null && string.Equals(go.name, current.name, StringComparison.Ordinal));
-            if (foundIdx >= 0)
-            {
-                obj = battlerObjects[foundIdx];
-                Debug.LogWarning("[TurnBaseSystem] Found battlerObjects[" + foundIdx + "] matching battler '" + current.name + "'. Using that GameObject and setting turnIndex=" + foundIdx + ".");
-                turnIndex = foundIdx;
-            }
-            else
-            {
-                // last-resort: use first available GameObject but warn (indicates lists are out of sync)
-                obj = battlerObjects.FirstOrDefault(go => go != null);
-                Debug.LogWarning("[TurnBaseSystem] Could not find GameObject matching battler '" + (current != null ? current.name : "null") + "'. Falling back to first available GameObject '" + (obj != null ? obj.name : "null") + "'. This likely indicates lists are out of sync.");
-            }
-        }
-        else
-        {
-            obj = null;
-        }
-        // ---------------------------------------------------------------------------
+        Battler current = (turnIndex < battlers.Count) ? battlers[turnIndex] : null;
+        GameObject obj = (turnIndex < battlerObjects.Count) ? battlerObjects[turnIndex] : null;
 
         EnsurePersistentPanelsVisible();
         RefreshTurnOrderUI();
 
+        // If this is a player (not a monster), assign the global WeaponUIController so the single UI controls the current player
+        try
+        {
+            if (current != null && !current.isMonster)
+            {
+                if (globalWeaponUI == null)
+                {
+                    // try to auto-find if not assigned in inspector
+                    globalWeaponUI = FindObjectOfType<WeaponUIController>();
+                    if (globalWeaponUI != null) Debug.Log($"[TurnBaseSystem] Auto-assigned globalWeaponUI to '{globalWeaponUI.gameObject.name}'");
+                }
+
+                if (globalWeaponUI != null)
+                {
+                    var ce = obj != null ? obj.GetComponent<CharacterEquipment>() : null;
+                    globalWeaponUI.playerEquipment = ce;
+                    globalWeaponUI.turnManager = this;
+                    try
+                    {
+                        var mi = typeof(WeaponUIController).GetMethod("RefreshUI", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (mi != null) mi.Invoke(globalWeaponUI, null);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning("[TurnBaseSystem] invoking globalWeaponUI.RefreshUI threw: " + ex);
+                    }
+
+                    Debug.Log($"[TurnBaseSystem] Assigned global WeaponUIController to {ce?.gameObject.name}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[TurnBaseSystem] globalWeaponUI assign threw: " + ex);
+        }
+
+        // Safer PartyAutoAttack invocation: only trigger for non-player NPCs (unless PartyAutoAttack wants a different policy)
+        try
+        {
+            var pa = FindObjectOfType<PartyAutoAttack>();
+            if (pa != null && obj != null)
+            {
+                bool isPlayerControlled = (obj.GetComponent<PlayerLevel>() != null) || (obj.GetComponent<PlayerController>() != null) || obj.CompareTag("Player");
+                if (!isPlayerControlled)
+                {
+                    try
+                    {
+                        pa.OnBattlerTurnStart(obj);
+                        Debug.Log($"[TurnBaseSystem] PartyAutoAttack triggered for {obj.name}");
+                    }
+                    catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] PartyAutoAttack.OnBattlerTurnStart threw: " + ex); }
+                }
+                else
+                {
+                    Debug.Log($"[TurnBaseSystem] Skipping PartyAutoAttack for player-controlled {obj.name}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[TurnBaseSystem] PartyAutoAttack lookup threw: " + ex);
+        }
+
         if (current != null && current.isMonster)
         {
             state = BattleState.MonsterAttacking;
-
             GameObject targetPlayer = GetRandomAlivePlayer();
-
             ShowPanelsForParticipants(obj, targetPlayer);
-
             SetPanelsInteractable(playerUIPanels, false);
             SetPanelsInteractable(persistentPlayerUIPanels, false);
 
@@ -519,84 +483,140 @@ public class TurnBaseSystem : MonoBehaviour
             {
                 monsterAI.MonsterAttack(monsterStat, targetPlayer, OnMonsterAttackFinished);
             }
-            else { Debug.Log("No player or MonsterAI - ending turn"); EndTurn(); }
+            else
+            {
+                Debug.Log("No player to attack or no MonsterAI");
+                EndTurn();
+            }
         }
-        else { state = BattleState.WaitingForPlayerInput; ShowPlayerUI(obj); }
+        else
+        {
+            state = BattleState.WaitingForPlayerInput;
+            ShowPlayerUI(obj);
+        }
     }
 
     void OnMonsterAttackFinished() => EndTurn();
 
-    // If a player action is in progress we block EndTurn from advancing (defensive).
+    // Make public so controllers can call when player returns
+    public void OnPlayerReturned() { state = BattleState.WaitingForMonsterTurn; EndTurn(); }
+
+    public void OnPlayerAction()
+    {
+        if (state != BattleState.WaitingForPlayerInput) return;
+        CleanUpDeadBattlers();
+        if (turnIndex < 0 || turnIndex >= battlers.Count) { Debug.LogError("turnIndex out of range!"); return; }
+
+        Battler current = battlers[turnIndex];
+        if (current != null && current.isMonster) { Debug.LogError("OnPlayerAction called during monster turn!"); return; }
+
+        GameObject playerObj = (turnIndex < battlerObjects.Count) ? battlerObjects[turnIndex] : null;
+        if (playerObj == null) { Debug.LogError("playerObj is null!"); EndTurn(); return; }
+
+        GoAttck playerAI = playerObj.GetComponent<GoAttck>();
+        if (playerAI == null) { Debug.LogError("GameObject has no GoAttck!"); EndTurn(); return; }
+
+        if (selectedMonster == null) { Debug.LogWarning("Please select a monster before attacking!"); return; }
+
+        GameObject monsterObj = selectedMonster;
+        if (playerAI != null && monsterObj != null)
+        {
+            ShowPanelsForParticipants(playerObj, monsterObj);
+            SetPanelsInteractable(playerUIPanels, false);
+            if (playerToPanel.ContainsKey(playerObj)) SetPanelInteractable(playerToPanel[playerObj], true);
+            if (playerToPanel.ContainsKey(monsterObj)) SetPanelInteractable(playerToPanel[monsterObj], true);
+
+            playerAI.AttackMonster(monsterObj, () => playerAI.ReturnToStart(OnPlayerReturned));
+            selectedMonster = null;
+        }
+    }
+
+    // ----------------------------
+    // Methods used elsewhere in project (exposed publicly)
+    // ----------------------------
+    public void OnMonsterSelected(GameObject monsterObj) { selectedMonster = monsterObj; Debug.Log("Selected Monster: " + (monsterObj ? monsterObj.name : "null")); }
+
+    public void OnPlayerAttackSelectedMonster()
+    {
+        if (selectedMonster == null) return;
+        if (turnIndex < 0 || turnIndex >= battlerObjects.Count) return;
+        GameObject playerObj = battlerObjects[turnIndex];
+        GoAttck playerAI = playerObj?.GetComponent<GoAttck>();
+        GameObject monsterObj = selectedMonster;
+        if (playerAI != null && monsterObj != null)
+        {
+            ShowPanelsForParticipants(playerObj, monsterObj);
+            SetPanelsInteractable(playerUIPanels, false);
+            if (playerToPanel.ContainsKey(playerObj)) SetPanelInteractable(playerToPanel[playerObj], true);
+            if (playerToPanel.ContainsKey(monsterObj)) SetPanelInteractable(playerToPanel[monsterObj], true);
+
+            playerAI.AttackMonster(monsterObj, () => playerAI.ReturnToStart(OnPlayerReturned));
+            selectedMonster = null;
+        }
+    }
+
+    public void OnPlayerEndTurn()
+    {
+        state = BattleState.PlayerReturning;
+        if (turnIndex < 0 || turnIndex >= battlerObjects.Count) { EndTurn(); return; }
+        GameObject playerObj = battlerObjects[turnIndex];
+        if (playerObj == null) { EndTurn(); return; }
+        GoAttck playerAI = playerObj.GetComponent<GoAttck>();
+        if (playerAI != null) playerAI.ReturnToStart(OnPlayerReturned);
+        else EndTurn();
+    }
+
     public void EndTurn()
     {
-        if (_playerActionInProgress)
-        {
-            Debug.LogWarning("[TurnBaseSystem] EndTurn called while player action in progress - ignoring until action completes.");
-            return;
-        }
-
-        if (Time.realtimeSinceStartup - _lastEndTurnTime < _endTurnDebounceSeconds) { Debug.LogWarning("[TurnBaseSystem] Ignored duplicate EndTurn() call (debounced)."); return; }
-        if (_endTurnLock) { Debug.LogWarning("[TurnBaseSystem] Ignored EndTurn() call because EndTurn is already processing."); return; }
-        _endTurnLock = true;
-        _lastEndTurnTime = Time.realtimeSinceStartup;
-
+        // Notify weapon handler to tick down duration for the battler that just acted
         try
         {
-            MarkCurrentBattlerActed();
-            if (battlers.Count == 0) { turnIndex = 0; StartTurn(); return; }
-            turnIndex++;
-            if (turnIndex >= battlers.Count) turnIndex = 0;
+            var currentGo = CurrentBattlerObject;
+            if (currentGo != null)
+            {
+                var wh = currentGo.GetComponent<WeaponHandler>();
+                if (wh != null)
+                {
+                    wh.OnTurnEnd();
+                    Debug.Log($"[TurnBaseSystem] WeaponHandler.OnTurnEnd called for {currentGo.name}");
+                }
+            }
         }
-        catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception in EndTurn(): " + ex); turnIndex = Mathf.Clamp(turnIndex + 1, 0, Math.Max(0, battlers.Count - 1)); }
-        finally { _endTurnLock = false; }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[TurnBaseSystem] WeaponHandler.OnTurnEnd threw: " + ex);
+        }
 
+        // Mark current battler as having acted in this round
+        MarkCurrentBattlerActed();
+
+        // advance index safely
+        if (battlers.Count == 0) { turnIndex = 0; StartTurn(); return; }
+        turnIndex++;
+        if (turnIndex >= battlers.Count) turnIndex = 0;
         StartTurn();
     }
 
-    // Called when a player's movement/ReturnToStart finishes in previous flow
-    public void OnPlayerReturned()
-    {
-        Debug.Log("[TurnBaseSystem] OnPlayerReturned called (playerActionInProgress=" + _playerActionInProgress + ")");
-        // clear flag first
-        _playerActionInProgress = false;
-
-        // now end the turn (EndTurn has guard to ignore duplicate/overlapping calls)
-        EndTurn();
-    }
-
-    // Updated: make selection idempotent and debounce rapid duplicate events
-    public void OnMonsterSelected(GameObject monster)
-    {
-        // if same monster already selected, do nothing
-        if (selectedMonster == monster)
-        {
-            Debug.Log("[TurnBaseSystem] Selected Monster (already): " + (monster != null ? monster.name : "null"));
-            return;
-        }
-
-        // debounce very rapid repeated selection events (e.g. OnMouseDown + pointer event fired together)
-        if (Time.realtimeSinceStartup - _lastSelectTime < _selectDebounceSeconds)
-        {
-            Debug.Log("[TurnBaseSystem] Selection ignored (debounced): " + (monster != null ? monster.name : "null"));
-            // update timestamp to avoid a train of repeated logs
-            _lastSelectTime = Time.realtimeSinceStartup;
-            return;
-        }
-
-        _lastSelectTime = Time.realtimeSinceStartup;
-        selectedMonster = monster;
-        Debug.Log("[TurnBaseSystem] Selected Monster: " + (monster != null ? monster.name : "null"));
-    }
-
-    public void MarkCurrentBattlerActed()
+    void MarkCurrentBattlerActed()
     {
         try
         {
             var go = CurrentBattlerObject;
+            Debug.Log($"[TMDebug] MarkCurrentBattlerActed for {(go != null ? go.name : "null")}");
             if (go != null) actedThisRound.Add(go);
-            if (AreAllAliveBattlersActed()) { roundNumber++; actedThisRound.Clear(); Debug.Log("[TurnBaseSystem] New round " + roundNumber); UpdateRoundUI(); }
+
+            if (AreAllAliveBattlersActed())
+            {
+                roundNumber++;
+                actedThisRound.Clear();
+                Debug.Log($"[TurnBaseSystem] New round {roundNumber}");
+                UpdateRoundUI();
+            }
         }
-        catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] MarkCurrentBattlerActed exception: " + ex); }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[TurnBaseSystem] MarkCurrentBattlerActed exception: {ex}");
+        }
     }
 
     bool AreAllAliveBattlersActed()
@@ -607,7 +627,60 @@ public class TurnBaseSystem : MonoBehaviour
         return true;
     }
 
-    void UpdateRoundUI() { if (roundText != null) roundText.text = "Round " + roundNumber; }
+    void UpdateRoundUI()
+    {
+        if (roundText != null) roundText.text = $"Round {roundNumber}";
+    }
+
+    public void EnsurePersistentPanelsVisiblePublic() => EnsurePersistentPanelsVisible();
+
+    public void EnsurePersistentPanelsVisible()
+    {
+        if (persistentPlayerUIPanels == null) return;
+        if (defaultCanvas == null)
+        {
+            var found = FindObjectOfType<Canvas>(true);
+            if (found != null) defaultCanvas = found;
+        }
+
+        foreach (var p in persistentPlayerUIPanels)
+        {
+            if (p == null) continue;
+
+            bool parentIsTransient = false;
+            if (p.transform.parent != null && playerUIPanels != null)
+            {
+                foreach (var tp in playerUIPanels)
+                {
+                    if (tp != null && p.transform.IsChildOf(tp.transform)) { parentIsTransient = true; break; }
+                }
+            }
+
+            if (defaultCanvas != null && (p.transform.parent != defaultCanvas.transform || parentIsTransient))
+            {
+                p.transform.SetParent(defaultCanvas.transform, false);
+                Debug.Log($"[TurnBaseSystem] Reparented persistent panel '{p.name}' under canvas '{defaultCanvas.name}' to keep it visible.");
+            }
+
+            if (!p.activeSelf) { p.SetActive(true); Debug.Log($"[TurnBaseSystem] Activated persistent panel '{p.name}'."); }
+
+            var cg = GetOrAddCanvasGroup(p);
+            if (cg != null && cg.alpha == 0f)
+            {
+                cg.alpha = 1f;
+                cg.interactable = true;
+                cg.blocksRaycasts = true;
+            }
+        }
+    }
+
+    public void RefreshTurnOrderUI()
+    {
+        if (!updateTurnOrderUI) return;
+        if (TurnOrderUI.Instance != null) TurnOrderUI.Instance.RefreshOrder(battlers, battlerObjects, turnIndex);
+    }
+
+    public void TryTickStatusForIndexPublic(int idx) => TryTickStatusForIndex(idx);
 
     void TryTickStatusForIndex(int idx)
     {
@@ -616,64 +689,32 @@ public class TurnBaseSystem : MonoBehaviour
         if (go == null) return;
 
         var sm = go.GetComponent<StatusManager>();
-        if (sm != null) { try { Debug.Log("[TurnBaseSystem] Ticking StatusManager for " + go.name); sm.TickStatusPerTurn(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception ticking StatusManager on " + go.name + ": " + ex); } }
-
-        var es = go.GetComponent<EnemyStats>();
-        if (es != null) { try { Debug.Log("[TurnBaseSystem] Ticking EnemyStats for " + go.name); es.TickStatusPerTurn(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception ticking EnemyStats on " + go.name + ": " + ex); } }
-
-        var ce = go.GetComponent<CharacterEquipment>();
-        if (ce != null) { try { ce.OnTurnStart(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception in CharacterEquipment.OnTurnStart for " + go.name + ": " + ex); } }
-
-        var wc = go.GetComponent<WeaponController>();
-        if (wc != null) { try { wc.OnTurnStart(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] Exception in WeaponController.OnTurnStart for " + go.name + ": " + ex); } }
-    }
-
-    // ---------- Cleaning / removal / record ----------
-    void CleanUpDeadBattlers()
-    {
-        if (battlerObjects == null) return;
-        for (int i = battlerObjects.Count - 1; i >= 0; i--)
+        if (sm != null)
         {
-            bool remove = false;
-            if (battlerObjects[i] == null)
-            {
-                Debug.Log("[TurnBaseSystem] Removing dead/null battler at index " + i + " (GO null)");
-                remove = true;
-            }
-            else if (i < battlers.Count && battlers[i].hp <= 0)
-            {
-                Debug.Log("[TurnBaseSystem] Removing dead battler at index " + i + " (hp<=0)");
-                if (i < battlers.Count && battlers[i].isMonster)
-                {
-                    var ms = battlerObjects[i].GetComponent<IMonsterStat>();
-                    if (ms != null) RecordEnemyDefeated(ms);
-                    else RecordEnemyDefeated(battlerObjects[i]);
-                }
-                remove = true;
-            }
-
-            if (remove)
-            {
-                var removedGO = battlerObjects[i];
-                if (battlerToPanel != null && removedGO != null && battlerToPanel.TryGetValue(removedGO, out var panel) && panel != null) { Destroy(panel); battlerToPanel.Remove(removedGO); }
-
-                // remove healthbar if present
-                if (HealthBarManager.Instance != null && removedGO != null)
-                {
-                    try { HealthBarManager.Instance.RemoveFor(removedGO); } catch { }
-                }
-
-                if (i < battlerObjects.Count) battlerObjects.RemoveAt(i);
-                if (i < battlers.Count) battlers.RemoveAt(i);
-                if (removedGO != null && actedThisRound.Contains(removedGO)) actedThisRound.Remove(removedGO);
-                if (turnIndex >= battlers.Count) turnIndex = Math.Max(0, battlers.Count - 1);
-            }
+            try { Debug.Log($"[TurnBaseSystem] Ticking StatusManager for {go.name}"); sm.TickStatusPerTurn(); }
+            catch (Exception ex) { Debug.LogWarning($"[TurnBaseSystem] Exception ticking StatusManager on {go.name}: {ex}"); }
         }
 
-        UpdatePlayerPanelMapping();
-        CheckGameEnd();
-        RefreshTurnOrderUI();
-        CreateOrAssignPerCharacterPanels();
+        var es = go.GetComponent<EnemyStats>();
+        if (es != null)
+        {
+            try { Debug.Log($"[TurnBaseSystem] Ticking EnemyStats for {go.name}"); es.TickStatusPerTurn(); }
+            catch (Exception ex) { Debug.LogWarning($"[TurnBaseSystem] Exception ticking EnemyStats on {go.name}: {ex}"); }
+        }
+
+        var ce = go.GetComponent<CharacterEquipment>();
+        if (ce != null)
+        {
+            try { ce.OnTurnStart(); }
+            catch (Exception ex) { Debug.LogWarning($"[TurnBaseSystem] Exception in CharacterEquipment.OnTurnStart for {go.name}: {ex}"); }
+        }
+
+        var wc = go.GetComponent<WeaponController>();
+        if (wc != null)
+        {
+            try { wc.OnTurnStart(); }
+            catch (Exception ex) { Debug.LogWarning($"[TurnBaseSystem] Exception in WeaponController.OnTurnStart for {go.name}: {ex}"); }
+        }
     }
 
     public void RemoveBattler(GameObject go, bool recordIfMonster = true)
@@ -687,37 +728,385 @@ public class TurnBaseSystem : MonoBehaviour
                 var ms = go.GetComponent<IMonsterStat>();
                 if (ms != null) RecordEnemyDefeated(ms);
                 else RecordEnemyDefeated(go);
+
+                try
+                {
+                    if (poolOfConsumables != null && poolOfConsumables.Count > 0 && InventoryManager.Instance != null)
+                    {
+                        var drops = LootGenerator.GenerateDrops(poolOfConsumables, 3);
+                        foreach (var item in drops)
+                        {
+                            if (item != null)
+                            {
+                                InventoryManager.Instance.AddItem(item);
+                                Debug.Log($"[TurnBaseSystem] Loot drop: added '{item.displayName}' to Inventory");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Debug.Log("[TurnBaseSystem] No poolOfConsumables assigned or InventoryManager missing - skipping loot drops.");
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning("[TurnBaseSystem] Exception while generating/adding loot: " + ex);
+                }
             }
 
-            if (battlerToPanel != null && battlerToPanel.TryGetValue(go, out var panel) && panel != null) { Destroy(panel); battlerToPanel.Remove(go); }
-
-            // remove healthbar for this GO if HealthBarManager tracking it
-            if (HealthBarManager.Instance != null)
+            if (battlerToPanel != null && battlerToPanel.TryGetValue(go, out var panel) && panel != null)
             {
-                try { HealthBarManager.Instance.RemoveFor(go); } catch { }
+                Destroy(panel);
+                battlerToPanel.Remove(go);
             }
 
             if (idx < battlerObjects.Count) battlerObjects.RemoveAt(idx);
             if (idx < battlers.Count) battlers.RemoveAt(idx);
+
             if (actedThisRound.Contains(go)) actedThisRound.Remove(go);
-            if (turnIndex >= battlers.Count) turnIndex = Math.Max(0, battlers.Count - 1);
-            UpdatePlayerPanelMapping(); RefreshTurnOrderUI(); Debug.Log("[TurnBaseSystem] Removed battler '" + go.name + "' at index " + idx);
+
+            if (turnIndex >= battlers.Count) turnIndex = Mathf.Max(0, battlers.Count - 1);
+            UpdatePlayerPanelMapping();
+            RefreshTurnOrderUI();
+            Debug.Log($"[TurnBaseSystem] Removed battler '{go.name}' at index {idx}");
         }
-        else Debug.LogWarning("[TurnBaseSystem] RemoveBattler: GameObject '" + go.name + "' not found in battlerObjects.");
+        else
+        {
+            Debug.LogWarning($"[TurnBaseSystem] RemoveBattler: GameObject '{go.name}' not found in battlerObjects.");
+        }
     }
 
-    // ---------- Inserted methods: RecordEnemyDefeated ----------
+    public void CleanUpDeadBattlers()
+    {
+        if (battlerObjects == null) return;
+
+        for (int i = battlerObjects.Count - 1; i >= 0; i--)
+        {
+            bool remove = false;
+            if (battlerObjects[i] == null)
+            {
+                Debug.Log($"[TurnBaseSystem] Removing dead/null battler at index {i} (GO null)");
+                remove = true;
+            }
+            else if (i < battlers.Count && battlers[i].hp <= 0)
+            {
+                Debug.Log($"[TurnBaseSystem] Removing dead battler at index {i} (hp<=0)");
+                if (i < battlers.Count && battlers[i].isMonster)
+                {
+                    var ms = battlerObjects[i].GetComponent<IMonsterStat>();
+                    if (ms != null) RecordEnemyDefeated(ms);
+                    else RecordEnemyDefeated(battlerObjects[i]);
+                }
+                remove = true;
+            }
+
+            if (remove)
+            {
+                var removedGO = battlerObjects[i];
+
+                if (battlerToPanel != null && removedGO != null && battlerToPanel.TryGetValue(removedGO, out var panel) && panel != null)
+                {
+                    Destroy(panel);
+                    battlerToPanel.Remove(removedGO);
+                }
+
+                if (i < battlerObjects.Count) battlerObjects.RemoveAt(i);
+                if (i < battlers.Count) battlers.RemoveAt(i);
+
+                if (removedGO != null && actedThisRound.Contains(removedGO)) actedThisRound.Remove(removedGO);
+
+                if (turnIndex >= battlers.Count) turnIndex = Mathf.Max(0, battlers.Count - 1);
+            }
+        }
+
+        UpdatePlayerPanelMapping();
+        CheckGameEnd();
+        RefreshTurnOrderUI();
+        CreateOrAssignPerCharacterPanels();
+    }
+
+    public void CreateOrAssignPerCharacterPanels()
+    {
+        if (perCharacterPanelPrefab == null) return;
+
+        Transform parent = defaultCanvas != null ? defaultCanvas.transform : null;
+        if (parent == null)
+        {
+            var found = FindObjectOfType<Canvas>(true);
+            if (found != null) parent = found.transform;
+        }
+        if (parent == null) { Debug.LogWarning("[TurnBaseSystem] No Canvas found to parent per-character panels."); return; }
+
+        var existingKeys = battlerToPanel.Keys.ToList();
+        foreach (var key in existingKeys)
+        {
+            if (!battlerObjects.Contains(key))
+            {
+                if (battlerToPanel.TryGetValue(key, out var oldP) && oldP != null) Destroy(oldP);
+                battlerToPanel.Remove(key);
+            }
+        }
+
+        for (int i = 0; i < battlerObjects.Count && i < battlers.Count; i++)
+        {
+            var go = battlerObjects[i];
+            if (go == null) continue;
+            if (battlerToPanel.ContainsKey(go)) continue;
+
+            var panel = Instantiate(perCharacterPanelPrefab, parent, false);
+            var ui = panel.GetComponent<PerCharacterUIController>();
+            if (ui != null)
+            {
+                ui.playerEquipment = go.GetComponent<CharacterEquipment>();
+                ui.turnManager = this;
+                try { ui.RefreshAll(); } catch { }
+            }
+            battlerToPanel[go] = panel;
+        }
+    }
+
+    public void CheckGameEnd()
+    {
+        bool hasPlayer = battlers.Select((b, i) => new { b, i })
+            .Any(x => x.b != null && !x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
+
+        bool hasMonster = battlers.Select((b, i) => new { b, i })
+            .Any(x => x.b != null && x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
+
+        Debug.Log($"CheckGameEnd: hasPlayer={hasPlayer}, hasMonster={hasMonster}, battler count={battlers.Count}");
+
+        if (!hasPlayer)
+        {
+            Debug.Log("Game Over! All players are dead.");
+            if (BattleEndUIManager.Instance != null) BattleEndUIManager.Instance.ShowGameOver("Game Over");
+            else HideAllPlayerUI();
+            return;
+        }
+
+        if (!hasMonster)
+        {
+            Debug.Log("Victory! All monsters are dead.");
+
+            var rewards = new List<Reward>();
+            int totalExp = 0;
+
+            if (defeatedRewards != null && defeatedRewards.Count > 0)
+            {
+                foreach (var r in defeatedRewards) { if (r == null) continue; rewards.Add(r); totalExp += r.exp; }
+            }
+            else
+            {
+                foreach (var go in defeatedEnemies)
+                {
+                    if (go == null) continue;
+                    var ms = go.GetComponent<IMonsterStat>();
+                    if (ms != null) { var r = new Reward(ms.monsterName, 1, 0, ms.expValue); rewards.Add(r); totalExp += ms.expValue; }
+                    else { var r = new Reward(go.name, 1, 0, 0); rewards.Add(r); }
+                }
+            }
+
+            var alivePlayers = battlerObjects.Select((obj, idx) => new { obj, idx })
+                .Where(x => x.obj != null && x.idx < battlers.Count && !battlers[x.idx].isMonster && battlers[x.idx].hp > 0)
+                .Select(x => x.obj).ToList();
+
+            if (BattleEndUIManager.Instance != null) BattleEndUIManager.Instance.ShowVictory(rewards, totalExp, alivePlayers);
+            else
+            {
+                if (totalExp > 0 && alivePlayers.Count > 0) AwardExpToPlayers(totalExp, alivePlayers);
+                if (rewards != null && rewards.Count > 0) foreach (var r in rewards) Debug.Log($"[TurnBaseSystem] (Fallback) Would award item '{r.id}' x{r.quantity}");
+            }
+
+            defeatedRewards.Clear();
+            defeatedEnemies.Clear();
+        }
+    }
+
+    public void AwardExpToPlayers(int totalExp, List<GameObject> alivePlayers)
+    {
+        if (alivePlayers == null || alivePlayers.Count == 0 || totalExp <= 0) return;
+
+        int perPlayer = totalExp / alivePlayers.Count;
+        int remainder = totalExp % alivePlayers.Count;
+
+        for (int i = 0; i < alivePlayers.Count; i++)
+        {
+            var p = alivePlayers[i];
+            if (p == null) continue;
+            int grant = perPlayer + (i < remainder ? 1 : 0);
+
+            var pl = p.GetComponent<PlayerLevel>();
+            if (pl != null)
+            {
+                pl.AddExp(grant);
+                Debug.Log($"[TurnBaseSystem] Awarded {grant} EXP to {p.name} via PlayerLevel");
+                continue;
+            }
+
+            var ps = p.GetComponent<PlayerStat>();
+            if (ps != null)
+            {
+                try
+                {
+                    var m = ps.GetType().GetMethod("AddExp", new Type[] { typeof(int) });
+                    if (m != null) { m.Invoke(ps, new object[] { grant }); Debug.Log($"[TurnBaseSystem] Awarded {grant} EXP to {p.name} via PlayerStat.AddExp"); continue; }
+                }
+                catch (Exception ex) { Debug.LogWarning($"[TurnBaseSystem] Failed to call PlayerStat.AddExp on {p.name}: {ex}"); }
+            }
+
+            Debug.LogWarning($"[TurnBaseSystem] Could not award EXP to {p.name} - no PlayerLevel or PlayerStat.AddExp found");
+        }
+    }
+
+    public void UpdatePlayerPanelMapping()
+    {
+        playerToPanel.Clear();
+        persistentPlayerToPanel.Clear();
+        if ((playerUIPanels == null || playerUIPanels.Count == 0) && (persistentPlayerUIPanels == null || persistentPlayerUIPanels.Count == 0)) return;
+
+        // Use ICharacterStat to consider a GameObject a "player"; fallback not used here intentionally.
+        var playerObjects = characterObjects?.Where(go => go != null && go.GetComponent<ICharacterStat>() != null).ToList() ?? new List<GameObject>();
+        for (int i = 0; i < playerObjects.Count; i++)
+        {
+            if (i < playerUIPanels.Count && playerObjects[i] != null && playerUIPanels[i] != null) playerToPanel[playerObjects[i]] = playerUIPanels[i];
+            if (i < persistentPlayerUIPanels.Count && playerObjects[i] != null && persistentPlayerUIPanels[i] != null) persistentPlayerToPanel[playerObjects[i]] = persistentPlayerUIPanels[i];
+        }
+    }
+
+    public CanvasGroup GetOrAddCanvasGroup(GameObject go)
+    {
+        if (go == null) return null;
+        var cg = go.GetComponent<CanvasGroup>();
+        if (cg == null) cg = go.AddComponent<CanvasGroup>();
+        return cg;
+    }
+
+    public void SetPanelInteractable(GameObject panel, bool interactable)
+    {
+        if (panel == null) return;
+        var cg = GetOrAddCanvasGroup(panel);
+        if (cg == null) return;
+        cg.interactable = interactable;
+        cg.blocksRaycasts = interactable;
+        cg.alpha = interactable ? 1f : 0.6f;
+        var buttons = panel.GetComponentsInChildren<Button>(true);
+        foreach (var b in buttons) if (b != null) b.interactable = interactable;
+    }
+
+    public void SetPanelsInteractable(IEnumerable<GameObject> panels, bool interactable)
+    {
+        if (panels == null) return;
+        foreach (var p in panels) SetPanelInteractable(p, interactable);
+    }
+
+    public void ShowPlayerUI(GameObject playerObj)
+    {
+        HideTransientPlayerUI();
+        SetPanelsInteractable(playerUIPanels, false);
+
+        if (playerObj != null && playerToPanel.ContainsKey(playerObj))
+        {
+            var panel = playerToPanel[playerObj];
+            if (panel != null) { panel.SetActive(true); SetPanelInteractable(panel, true); }
+        }
+
+        if (filterPersistentToParticipants)
+        {
+            SetPanelsInteractable(persistentPlayerUIPanels, false);
+            if (playerObj != null && persistentPlayerToPanel.ContainsKey(playerObj))
+            {
+                var p = persistentPlayerToPanel[playerObj];
+                if (p != null) { p.SetActive(true); SetPanelInteractable(p, true); }
+            }
+        }
+        else
+        {
+            SetPanelsInteractable(persistentPlayerUIPanels, true);
+            if (persistentPlayerUIPanels != null) foreach (var p in persistentPlayerUIPanels) if (p != null) p.SetActive(true);
+        }
+    }
+
+    public void ShowPanelsForParticipants(GameObject attacker, GameObject target)
+    {
+        HideTransientPlayerUI();
+        SetPanelsInteractable(playerUIPanels, false);
+
+        if (attacker != null && playerToPanel.ContainsKey(attacker))
+        {
+            var p = playerToPanel[attacker];
+            if (p != null) { p.SetActive(true); SetPanelInteractable(p, state == BattleState.WaitingForPlayerInput); }
+        }
+
+        if (target != null && playerToPanel.ContainsKey(target))
+        {
+            var p = playerToPanel[target];
+            if (p != null) { p.SetActive(true); SetPanelInteractable(p, state == BattleState.WaitingForPlayerInput); }
+        }
+
+        if (filterPersistentToParticipants)
+        {
+            SetPanelsInteractable(persistentPlayerUIPanels, false);
+
+            if (attacker != null && persistentPlayerToPanel.ContainsKey(attacker))
+            {
+                var p = persistentPlayerToPanel[attacker];
+                if (p != null) { p.SetActive(true); SetPanelInteractable(p, state == BattleState.WaitingForPlayerInput); }
+            }
+            if (target != null && persistentPlayerToPanel.ContainsKey(target))
+            {
+                var p = persistentPlayerToPanel[target];
+                if (p != null) { p.SetActive(true); SetPanelInteractable(p, state == BattleState.WaitingForPlayerInput); }
+            }
+        }
+        else
+        {
+            bool interact = (state == BattleState.WaitingForPlayerInput);
+            SetPanelsInteractable(persistentPlayerUIPanels, interact);
+            if (persistentPlayerUIPanels != null) foreach (var p in persistentPlayerUIPanels) if (p != null) p.SetActive(true);
+        }
+    }
+
+    void HideTransientPlayerUI()
+    {
+        if (playerUIPanels == null) return;
+        foreach (var panel in playerUIPanels)
+        {
+            if (panel == null) continue;
+            var cg = GetOrAddCanvasGroup(panel);
+            if (cg == null) continue;
+            cg.interactable = false;
+            cg.blocksRaycasts = false;
+            cg.alpha = 0.0f;
+        }
+    }
+
+    public void HideAllPersistentPanels()
+    {
+        if (persistentPlayerUIPanels == null) return;
+        foreach (var panel in persistentPlayerUIPanels)
+        {
+            if (panel != null)
+            {
+                var cg = GetOrAddCanvasGroup(panel);
+                if (cg == null) continue;
+                cg.interactable = false;
+                cg.blocksRaycasts = false;
+                cg.alpha = 0f;
+            }
+        }
+    }
+
+    public void HideAllPlayerUI()
+    {
+        HideTransientPlayerUI();
+        HideAllPersistentPanels();
+    }
+
     public void RecordEnemyDefeated(GameObject enemy)
     {
         if (enemy == null) return;
-
         if (defeatedEnemies == null) defeatedEnemies = new List<GameObject>();
-        if (!defeatedEnemies.Contains(enemy))
-        {
-            defeatedEnemies.Add(enemy);
-            Debug.Log("[TurnBaseSystem] Recorded defeated enemy (GO): " + enemy.name);
-        }
-        else Debug.Log("[TurnBaseSystem] Enemy already recorded in defeatedEnemies: " + enemy.name);
+        if (!defeatedEnemies.Contains(enemy)) { defeatedEnemies.Add(enemy); Debug.Log($"[TurnBaseSystem] Recorded defeated enemy (GO): {enemy.name}"); }
+        else Debug.Log($"[TurnBaseSystem] Enemy already recorded in defeatedEnemies: {enemy.name}");
 
         var ms = enemy.GetComponent<IMonsterStat>();
         if (ms != null) RecordEnemyDefeated(ms);
@@ -725,10 +1114,7 @@ public class TurnBaseSystem : MonoBehaviour
         {
             if (defeatedRewards == null) defeatedRewards = new List<Reward>();
             var r = new Reward(enemy.name, 1, 0, 0);
-            if (!defeatedRewards.Any(x => x.id == r.id && x.exp == r.exp))
-            {
-                defeatedRewards.Add(r);
-            }
+            if (!defeatedRewards.Any(x => x.id == r.id && x.exp == r.exp)) defeatedRewards.Add(r);
         }
     }
 
@@ -743,163 +1129,20 @@ public class TurnBaseSystem : MonoBehaviour
         if (!defeatedRewards.Any(x => x.id == r.id && x.exp == r.exp))
         {
             defeatedRewards.Add(r);
-            Debug.Log("[TurnBaseSystem] Recorded defeated enemy stat: " + id + " exp=" + ms.expValue);
+            Debug.Log($"[TurnBaseSystem] Recorded defeated enemy stat: {id} exp={ms.expValue}");
         }
-        else
-        {
-            Debug.Log("[TurnBaseSystem] Duplicate Reward ignored for " + id + " exp=" + ms.expValue);
-        }
+        else Debug.Log($"[TurnBaseSystem] Duplicate Reward ignored for {id} exp={ms.expValue}");
     }
 
-    // ---------- Panels + Healthbars ----------
-    void CreateOrAssignPerCharacterPanels()
+    public GameObject GetRandomAlivePlayer()
     {
-        if (perCharacterPanelPrefab == null) return;
-        Transform parent = defaultCanvas != null ? defaultCanvas.transform : null;
-        if (parent == null) { var found = FindObjectOfType<Canvas>(true); if (found != null) parent = found.transform; }
-        if (parent == null) { Debug.LogWarning("[TurnBaseSystem] No Canvas found to parent per-character panels. Set defaultCanvas or add a Canvas in scene."); return; }
+        if (battlerObjects == null || battlers == null) return null;
+        var alivePlayers = battlerObjects
+            .Select((obj, i) => new { obj, i })
+            .Where(x => x.obj != null && x.i < battlers.Count && battlers[x.i] != null && !battlers[x.i].isMonster && battlers[x.i].hp > 0)
+            .Select(x => x.obj)
+            .ToList();
 
-        // Destroy existing panels and recreate deterministically
-        if (battlerToPanel != null && battlerToPanel.Count > 0)
-        {
-            foreach (var kv in battlerToPanel.ToList())
-            {
-                try { if (kv.Value != null) Destroy(kv.Value); } catch { }
-            }
-            battlerToPanel.Clear();
-        }
-
-        for (int i = 0; i < battlerObjects.Count && i < battlers.Count; i++)
-        {
-            var go = battlerObjects[i];
-            if (go == null) continue;
-
-            var panel = Instantiate(perCharacterPanelPrefab, parent, false);
-            panel.name = $"PerCharacterPanel_{i}_{go.name}_{go.GetInstanceID()}";
-
-            var ui = panel.GetComponent<PerCharacterUIController>();
-            if (ui != null)
-            {
-                ui.playerEquipment = go.GetComponent<CharacterEquipment>();
-                ui.turnManager = this;
-                try { ui.RefreshAll(); } catch (Exception ex) { Debug.LogWarning("[TurnBaseSystem] ui.RefreshAll exception: " + ex); }
-            }
-
-            battlerToPanel[go] = panel;
-            Debug.Log($"[TurnBaseSystem] Created per-character panel: index={i}, go={go.name}, id={go.GetInstanceID()}, panel={panel.name}");
-        }
+        return alivePlayers.Count > 0 ? alivePlayers[UnityEngine.Random.Range(0, alivePlayers.Count)] : null;
     }
-
-    private IEnumerator DelayedHealthbarCreate(float delaySeconds, int attempts)
-    {
-        int tries = 0;
-        while (tries < attempts)
-        {
-            yield return new WaitForSeconds(delaySeconds);
-            tries++;
-
-            if (!manageHealthbars)
-            {
-                Debug.Log("[TurnBaseSystem] DelayedHealthbarCreate: manageHealthbars = false, aborting delayed healthbar creation.");
-                _delayedHealthbarCoroutine = null;
-                yield break;
-            }
-
-            if (battlerObjects != null && battlerObjects.Count > 0)
-            {
-                if (HealthBarManager.Instance != null)
-                {
-                    for (int i = 0; i < battlerObjects.Count; i++)
-                    {
-                        var go = battlerObjects[i];
-                        if (go == null) continue;
-                        HealthBarManager.Instance.CreateFor(go, go.transform);
-                        Debug.Log("[TurnBaseSystem] Delayed: CreateFor called for " + go.name + " on attempt " + tries + " id=" + go.GetInstanceID());
-                    }
-                }
-                _delayedHealthbarCoroutine = null;
-                yield break;
-            }
-
-            if (characterObjects != null && characterObjects.Count > 0)
-            {
-                if (HealthBarManager.Instance != null)
-                {
-                    for (int i = 0; i < characterObjects.Count; i++)
-                    {
-                        var go = characterObjects[i];
-                        if (go == null) continue;
-                        HealthBarManager.Instance.CreateFor(go, go.transform);
-                        Debug.Log("[TurnBaseSystem] Delayed: CreateFor called for characterObjects " + go.name + " on attempt " + tries);
-                    }
-                }
-                _delayedHealthbarCoroutine = null;
-                yield break;
-            }
-        }
-
-        Debug.LogWarning("[TurnBaseSystem] DelayedHealthbarCreate gave up after " + attempts + " attempts; no characters found.");
-        _delayedHealthbarCoroutine = null;
-    }
-
-    void CheckGameEnd()
-    {
-        bool hasPlayer = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && !x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
-        bool hasMonster = battlers.Select((b, i) => new { b, i }).Any(x => x.b != null && x.b.isMonster && x.b.hp > 0 && x.i < battlerObjects.Count && battlerObjects[x.i] != null);
-        Debug.Log("CheckGameEnd: hasPlayer=" + hasPlayer + ", hasMonster=" + hasMonster + ", battler count=" + battlers.Count);
-        if (!hasPlayer) { Debug.Log("Game Over! All players are dead."); if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowGameOver("Game Over"); } else HideAllPlayerUI(); return; }
-        if (!hasMonster)
-        {
-            Debug.Log("Victory! All monsters are dead.");
-            var rewards = new List<Reward>(); int totalExp = 0;
-            if (defeatedRewards != null && defeatedRewards.Count > 0) { foreach (var r in defeatedRewards) { if (r == null) continue; rewards.Add(r); totalExp += r.exp; } }
-            else
-            {
-                foreach (var go in defeatedEnemies)
-                {
-                    if (go == null) continue;
-                    var ms = go.GetComponent<IMonsterStat>();
-                    if (ms != null) { var r = new Reward(ms.monsterName, 1, 0, ms.expValue); rewards.Add(r); totalExp += ms.expValue; }
-                    else { var r = new Reward(go.name, 1, 0, 0); rewards.Add(r); }
-                }
-            }
-
-            var alivePlayers = battlerObjects.Select((obj, idx) => new { obj, idx }).Where(x => x.obj != null && x.idx < battlers.Count && !battlers[x.idx].isMonster && battlers[x.idx].hp > 0).Select(x => x.obj).ToList();
-            if (BattleEndUIManager.Instance != null) { BattleEndUIManager.Instance.ShowVictory(rewards, totalExp, alivePlayers); }
-            else { if (totalExp > 0 && alivePlayers.Count > 0) { AwardExpToPlayers(totalExp, alivePlayers); } if (rewards != null && rewards.Count > 0) { foreach (var r in rewards) Debug.Log("[TurnBaseSystem] (Fallback) Would award item '" + r.id + "' x" + r.quantity); } }
-            defeatedRewards.Clear(); defeatedEnemies.Clear();
-        }
-    }
-
-    void AwardExpToPlayers(int totalExp, List<GameObject> alivePlayers)
-    {
-        if (alivePlayers == null || alivePlayers.Count == 0 || totalExp <= 0) return;
-        int perPlayer = totalExp / alivePlayers.Count;
-        int remainder = totalExp % alivePlayers.Count;
-        for (int i = 0; i < alivePlayers.Count; i++)
-        {
-            var p = alivePlayers[i];
-            if (p == null) continue;
-            var ps = p.GetComponent<PlayerStat>();
-            if (ps != null)
-            {
-                int grant = perPlayer + (i < remainder ? 1 : 0);
-                ps.AddExp(grant);
-                Debug.Log("[TurnBaseSystem] Awarded " + grant + " exp to " + p.name);
-            }
-        }
-    }
-
-    // UI helper stubs (implementations copied/kept from previous TurnManager if needed)
-    void UpdatePlayerPanelMapping() { /* same logic as before, keep mapping playerObjects -> playerUIPanels */ }
-    void EnsurePersistentPanelsVisible() { /* same logic as before */ }
-    void RefreshTurnOrderUI() { if (updateTurnOrderUI && TurnOrderUI.Instance != null) TurnOrderUI.Instance.RefreshOrder(battlers, battlerObjects, turnIndex); }
-    void ShowPlayerUI(GameObject playerObj) { /* keep previous logic */ }
-    void ShowPanelsForParticipants(GameObject attacker, GameObject target) { /* keep previous logic */ }
-    void SetPanelsInteractable(IEnumerable<GameObject> panels, bool interactable) { /* keep previous logic */ }
-    void SetPanelInteractable(GameObject panel, bool interactable) { /* keep previous logic */ }
-    void HideTransientPlayerUI() { /* keep previous logic */ }
-    void HideAllPersistentPanels() { /* keep previous logic */ }
-    void HideAllPlayerUI() { HideTransientPlayerUI(); HideAllPersistentPanels(); }
-    void RefreshHPBars() { /* optional helper */ }
 }
