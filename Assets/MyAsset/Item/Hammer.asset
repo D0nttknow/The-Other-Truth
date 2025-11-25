@@ -1,0 +1,18 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 05e14a30003f0b9408046fe9de8e1334, type: 3}
+  m_Name: Hammer
+  m_EditorClassIdentifier: Assembly-CSharp::WeaponDefinition
+  weaponType: 1
+  damageMultiplier: 2.25
+  speedModPercent: -25
+  durationTurns: 1
